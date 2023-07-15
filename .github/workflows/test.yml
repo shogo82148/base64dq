@@ -1,0 +1,51 @@
+name: test
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go:
+          - "1.21.0-rc.3"
+          - "1.20"
+          - "1.19"
+        goexperiment: [""]
+        include:
+          # test with GOEXPERIMENT=loopvar
+          # https://github.com/golang/go/wiki/LoopvarExperiment
+          - os: ubuntu-latest
+            go: "1.21.0-rc.3"
+            goexperiment: "loopvar"
+
+    steps:
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Check out the code
+        uses: actions/checkout@v3
+
+      - name: Test
+        run: go test -v -coverprofile=profile.cov ./...
+        env:
+          GOEXPERIMENT: ${{ matrix.goexperiment }}
+
+      - name: Send coverage
+        uses: shogo82148/actions-goveralls@v1
+        with:
+          path-to-profile: profile.cov
+          parallel: true
+          flag-name: OS-${{ runner.os }}-Go-${{ matrix.go }}
+
+  # notifies that all test jobs are finished.
+  finish:
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: shogo82148/actions-goveralls@v1
+        with:
+          parallel-finished: true

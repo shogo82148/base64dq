@@ -80,3 +80,8 @@ base64 uses the Japanese hiragana instead of ascii alphabets and digits.
 | 62    | +               | べ                |
 | 63    | /               | ぼ                |
 | (pad) | =               | ・                |
+
+## Reference
+
+- [yoshi389111/dq1pswd](https://github.com/yoshi389111/dq1pswd)
+- [DQ1 復活の呪文解析日記](https://github.com/yoshi389111/dq1pswd/blob/main/dq1ana.md)

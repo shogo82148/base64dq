@@ -220,6 +220,30 @@ func TestEncode(t *testing.T) {
 	}
 }
 
+func TestEncodedLen(t *testing.T) {
+	for _, tt := range []struct {
+		enc  *Encoding
+		n    int
+		want int
+	}{
+		{RawStdEncoding, 0, 0},
+		{RawStdEncoding, 1, 8},
+		{RawStdEncoding, 2, 12},
+		{RawStdEncoding, 3, 16},
+		{RawStdEncoding, 7, 40},
+		{StdEncoding, 0, 0},
+		{StdEncoding, 1, 16},
+		{StdEncoding, 2, 16},
+		{StdEncoding, 3, 16},
+		{StdEncoding, 4, 32},
+		{StdEncoding, 7, 48},
+	} {
+		if got := tt.enc.EncodedLen(tt.n); got != tt.want {
+			t.Errorf("EncodedLen(%d): got %d, want %d", tt.n, got, tt.want)
+		}
+	}
+}
+
 func TestDecode(t *testing.T) {
 	for _, p := range pairs {
 		for _, tt := range encodingTests {

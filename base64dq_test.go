@@ -183,13 +183,36 @@ var dq2std = strings.NewReplacer(
 	"・", "=",
 )
 
+// Do nothing to a reference base64 string (leave in standard format)
+func stdRef(ref string) string {
+	return ref
+}
+
+// Convert a reference string to raw, unpadded format
+func rawRef(ref string) string {
+	return strings.TrimRight(ref, "・")
+}
+
+type encodingTest struct {
+	enc  *Encoding           // Encoding to test
+	conv func(string) string // Reference string converter
+}
+
+var encodingTests = []encodingTest{
+	{StdEncoding, stdRef},
+	{RawStdEncoding, rawRef},
+	{StdEncoding.Strict(), stdRef},
+	{RawStdEncoding.Strict(), rawRef},
+}
+
 func TestEncode(t *testing.T) {
 	for _, p := range pairs {
-		encoded := StdEncoding.EncodeToString([]byte(p.decoded))
-		if encoded != p.encoded {
-			t.Errorf("Encode(%q) = %q, want %q", p.decoded, encoded, p.encoded)
+		for _, tt := range encodingTests {
+			encoded := tt.enc.EncodeToString([]byte(p.decoded))
+			if encoded != tt.conv(p.encoded) {
+				t.Errorf("Encode(%q) = %q, want %q", p.decoded, encoded, tt.conv(p.encoded))
+			}
 		}
-
 		encoded2 := std2dq.Replace(base64.StdEncoding.EncodeToString([]byte(p.decoded)))
 		if encoded2 != p.encoded {
 			t.Errorf("Encode(%q) = %q, want %q", p.decoded, encoded2, p.encoded)
@@ -199,12 +222,15 @@ func TestEncode(t *testing.T) {
 
 func TestDecode(t *testing.T) {
 	for _, p := range pairs {
-		decoded, err := StdEncoding.DecodeString(p.encoded)
-		if err != nil {
-			t.Errorf("Decode(%q) = %v", p.encoded, err)
-		}
-		if string(decoded) != string(p.decoded) {
-			t.Errorf("Decode(%q) = %q, want %q", p.encoded, decoded, p.decoded)
+		for _, tt := range encodingTests {
+			encoded := tt.conv(p.encoded)
+			decoded, err := tt.enc.DecodeString(encoded)
+			if err != nil {
+				t.Errorf("Decode(%q) = %v", p.encoded, err)
+			}
+			if string(decoded) != string(p.decoded) {
+				t.Errorf("Decode(%q) = %q, want %q", p.encoded, decoded, p.decoded)
+			}
 		}
 
 		decoded2, err := base64.StdEncoding.DecodeString(dq2std.Replace(p.encoded))

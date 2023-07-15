@@ -90,11 +90,34 @@ func NewEncoding(encoder string) *Encoding {
 	return e
 }
 
+// WithPadding creates a new encoding identical to enc except
+// with a specified padding character, or NoPadding to disable padding.
+// The padding character must not be '\r' or '\n', must not
+// be contained in the encoding's alphabet.
+func (enc Encoding) WithPadding(padding rune) *Encoding {
+	if padding == '\r' || padding == '\n' {
+		panic("invalid padding")
+	}
+
+	if enc.decode.search(padding) != 0xff {
+		panic("padding contained in alphabet")
+	}
+
+	enc.padChar = padding
+	return &enc
+}
+
 // StdEncoding is a base64 encoding used in Revival Password.
 var StdEncoding = NewEncoding(encodeStd)
 
-// NameEncoding is the name base64dq encoding.
+// NameEncoding is a base64 encoding used in encoding a user name.
 var NameEncoding = NewEncoding(encodeName)
+
+// RawStdEncoding is the standard raw, unpadded base64 encoding.
+var RawStdEncoding = StdEncoding.WithPadding(NoPadding)
+
+// RawNameEncoding is the name raw, unpadded base64 encoding.
+var RawNameEncoding = NameEncoding.WithPadding(NoPadding)
 
 func (enc *Encoding) Encode(dst, src []byte) int {
 	if len(src) == 0 {

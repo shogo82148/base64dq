@@ -87,7 +87,7 @@ var std2dq = strings.NewReplacer(
 	"9", "ぶ",
 	"+", "べ",
 	"/", "ぼ",
-	"=", "ー",
+	"=", "・",
 )
 
 var dq2std = strings.NewReplacer(
@@ -155,7 +155,7 @@ var dq2std = strings.NewReplacer(
 	"ぶ", "9",
 	"べ", "+",
 	"ぼ", "/",
-	"ー", "=",
+	"・", "=",
 )
 
 func TestEncode(t *testing.T) {

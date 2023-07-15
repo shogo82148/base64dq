@@ -1,3 +1,9 @@
+// Package base64dq implements a base64 encoding variant that is inspired by the Revival Password of Dragon Quest.
+//
+// The Revival Password (ふっかつのじゅもん) is a string of 20 characters that is used to revive a player's party in the [Dragon Quest] series.
+// It is encoded in a custom base64 variant that uses 64 characters from the Japanese hiragana syllabary.
+//
+// [Dragon Quest]: https://www.dragonquest.jp/
 package base64dq
 
 import (
@@ -47,8 +53,10 @@ func (enc Encoding) Strict() *Encoding {
 }
 
 const encodeStd = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわがぎぐげござじずぜぞだぢづでどばびぶべぼ"
+const encodeName = "０１２３４５６７８９あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんっゃゅょ゛゜ー　"
+
 const (
-	StdPadding rune = 'ー' // Standard padding character
+	StdPadding rune = '・' // Standard padding character
 	NoPadding  rune = -1  // No padding
 )
 
@@ -82,8 +90,11 @@ func NewEncoding(encoder string) *Encoding {
 	return e
 }
 
-// StdEncoding is the standard base64dq encoding.
+// StdEncoding is a base64 encoding used in Revival Password.
 var StdEncoding = NewEncoding(encodeStd)
+
+// NameEncoding is the name base64dq encoding.
+var NameEncoding = NewEncoding(encodeName)
 
 func (enc *Encoding) Encode(dst, src []byte) int {
 	if len(src) == 0 {

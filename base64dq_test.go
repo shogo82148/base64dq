@@ -213,9 +213,14 @@ func TestEncode(t *testing.T) {
 				t.Errorf("Encode(%q) = %q, want %q", p.decoded, encoded, tt.conv(p.encoded))
 			}
 		}
+	}
+
+	// test compatibility with standard base64
+	for _, p := range pairs {
+		encoded := StdEncoding.EncodeToString([]byte(p.decoded))
 		encoded2 := std2dq.Replace(base64.StdEncoding.EncodeToString([]byte(p.decoded)))
-		if encoded2 != p.encoded {
-			t.Errorf("Encode(%q) = %q, want %q", p.decoded, encoded2, p.encoded)
+		if encoded != encoded2 {
+			t.Errorf("Encode(%q) = %q, want %q", p.decoded, encoded, encoded2)
 		}
 	}
 }
@@ -256,13 +261,20 @@ func TestDecode(t *testing.T) {
 				t.Errorf("Decode(%q) = %q, want %q", p.encoded, decoded, p.decoded)
 			}
 		}
+	}
 
+	// test compatibility with standard base64
+	for _, p := range pairs {
+		decoded, err := StdEncoding.DecodeString(p.encoded)
+		if err != nil {
+			t.Errorf("Decode(%q) = %v", p.encoded, err)
+		}
 		decoded2, err := base64.StdEncoding.DecodeString(dq2std.Replace(p.encoded))
 		if err != nil {
 			t.Errorf("Decode(%q) = %v", p.encoded, err)
 		}
-		if string(decoded2) != string(p.decoded) {
-			t.Errorf("Decode(%q) = %q, want %q", p.encoded, decoded2, p.decoded)
+		if string(decoded) != string(decoded2) {
+			t.Errorf("Decode(%q) = %q, want %q", p.encoded, decoded, decoded2)
 		}
 	}
 }

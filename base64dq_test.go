@@ -2,6 +2,7 @@ package base64dq
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,30 @@ var pairs = []testpair{
 	{"\x96\xb7\xd2\x59\xa7\xac\xc3\x0f\xc3\x1c\xb3\xd3\x5d\x37\xa2", "よわみてぬひまがごごぼえくしたとねとまも"},
 	{"\xa2\xf8\xd6\x69\xec\x80\x10\x44\xd7\x6d\xf8\xe7\xae\x7c\xb6", "るげやぬひまじあおおとねふみやりわりじだ"},
 	{"\xa6\xe8\x95\x65\xdc\x7f\x0c\x32\x8e\x49\x66\x9e\x89\xea\x6d", "れぐもにはほざぼええさそてぬひまもまれぎ"},
+
+	// RFC 3548 examples
+	{"\x14\xfb\x9c\x03\xd9\x7e", "かたぐへあぶよべ"},
+	{"\x14\xfb\x9c\x03\xd9", "かたぐへあぶゆ・"},
+	{"\x14\xfb\x9c\x03", "かたぐへあご・・"},
+
+	// RFC 4648 examples
+	{"", ""},
+	{"f", "はむ・・"},
+	{"fo", "はらび・"},
+	{"foo", "はらぶげ"},
+	{"foob", "はらぶげのむ・・"},
+	{"fooba", "はらぶげのらお・"},
+	{"foobar", "はらぶげのらかじ"},
+
+	// Wikipedia examples
+	{"sure.", "へぢにじはてづ・"},
+	{"sure", "へぢにじはち・・"},
+	{"sur", "へぢにじ"},
+	{"su", "へぢな・"},
+	{"leasure.", "ふきにめへぢにじはてづ・"},
+	{"easure.", "はぬかずほねこよしむ・・"},
+	{"asure.", "のねせぞへらなぐ"},
+	{"sure.", "へぢにじはてづ・"},
 }
 
 var std2dq = strings.NewReplacer(
@@ -189,5 +214,48 @@ func TestDecode(t *testing.T) {
 		if string(decoded2) != string(p.decoded) {
 			t.Errorf("Decode(%q) = %q, want %q", p.encoded, decoded2, p.decoded)
 		}
+	}
+}
+
+func BenchmarkEncodeToString(b *testing.B) {
+	data := make([]byte, 8192)
+	b.SetBytes(int64(len(data)))
+	for i := 0; i < b.N; i++ {
+		StdEncoding.EncodeToString(data)
+	}
+}
+
+func BenchmarkEncodeToString_Std(b *testing.B) {
+	enc := NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+	data := make([]byte, 8192)
+	b.ResetTimer()
+	b.SetBytes(int64(len(data)))
+	for i := 0; i < b.N; i++ {
+		enc.EncodeToString(data)
+	}
+}
+
+func BenchmarkEncodeToString_StdBase64(b *testing.B) {
+	data := make([]byte, 8192)
+	b.SetBytes(int64(len(data)))
+	for i := 0; i < b.N; i++ {
+		base64.StdEncoding.EncodeToString(data)
+	}
+}
+
+func BenchmarkDecodeString(b *testing.B) {
+	sizes := []int{2, 4, 8, 64, 8192}
+	benchFunc := func(b *testing.B, benchSize int) {
+		data := StdEncoding.EncodeToString(make([]byte, benchSize))
+		b.SetBytes(int64(len(data)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			StdEncoding.DecodeString(data)
+		}
+	}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("%d", size), func(b *testing.B) {
+			benchFunc(b, size)
+		})
 	}
 }

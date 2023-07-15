@@ -126,9 +126,18 @@ func (enc *Encoding) Encode(dst, src []byte) int {
 	di += copy(dst[di:], enc.encode[val>>12&0x3F])
 
 	switch remain {
-
+	case 2:
+		di += copy(dst[di:], enc.encode[val>>6&0x3F])
+		if enc.padChar != NoPadding {
+			di += utf8.EncodeRune(dst[di:], enc.padChar)
+		}
+	case 1:
+		if enc.padChar != NoPadding {
+			di += utf8.EncodeRune(dst[di:], enc.padChar)
+			di += utf8.EncodeRune(dst[di:], enc.padChar)
+		}
 	}
-	return 0
+	return di
 }
 
 func (enc *Encoding) EncodeToString(src []byte) string {
@@ -156,6 +165,7 @@ func (e CorruptInputError) Error() string {
 }
 
 func (enc *Encoding) Decode(dst, src []byte) (int, error) {
+	var err error
 	n := 0
 	si := 0
 	dlen := 4
@@ -165,14 +175,70 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 		var dbuf [4]byte
 
 		for j := 0; j < len(dbuf); j++ {
+			if len(src) == si {
+				switch {
+				case j == 0:
+					return n, nil
+				case j == 1, enc.padChar != NoPadding:
+					return n, CorruptInputError(si - 1)
+				}
+				dlen = j
+				break
+			}
 			r, size := utf8.DecodeRune(src[si:])
 			if r == utf8.RuneError {
-				return 0, CorruptInputError(si)
+				return n, CorruptInputError(si)
 			}
 			si += size
 
 			out := enc.decode.search(r)
-			dbuf[j] = out
+			if out != 0xFF {
+				dbuf[j] = out
+				continue
+			}
+
+			if r == '\n' || r == '\r' {
+				j--
+				continue
+			}
+
+			if r != enc.padChar {
+				return n, CorruptInputError(si - 1)
+			}
+
+			// We've reached the end and there's padding
+			switch j {
+			case 0, 1:
+				// incorrect padding
+				return n, CorruptInputError(si - 1)
+			case 2:
+				// "==" is expected, the first "=" is already consumed.
+				// skip over newlines
+				for si < len(src) && (src[si] == '\n' || src[si] == '\r') {
+					si++
+				}
+				if si == len(src) {
+					// not enough padding
+					return n, CorruptInputError(len(src))
+				}
+				pad, size := utf8.DecodeRune(src[si:])
+				if pad != enc.padChar {
+					// incorrect padding
+					return n, CorruptInputError(si - 1)
+				}
+				si += size
+			}
+
+			// skip over newlines
+			for si < len(src) && (src[si] == '\n' || src[si] == '\r') {
+				si++
+			}
+			if si < len(src) {
+				// trailing garbage
+				err = CorruptInputError(si)
+			}
+			dlen = j
+			break
 		}
 
 		// Convert 4x 6bit source bytes into 3 bytes
@@ -187,17 +253,20 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 		case 3:
 			dst[n+1] = dbuf[1]
 			if enc.strict && dbuf[2] != 0 {
-				return 0, CorruptInputError(si - 1)
+				return n, CorruptInputError(si - 1)
 			}
 			dbuf[1] = 0
 			fallthrough
 		case 2:
 			dst[n+0] = dbuf[0]
 			if enc.strict && (dbuf[1] != 0 || dbuf[2] != 0) {
-				return 0, CorruptInputError(si - 2)
+				return n, CorruptInputError(si - 2)
 			}
 		}
 		n += dlen - 1
+		if err != nil {
+			return n, err
+		}
 	}
 
 	return n, nil

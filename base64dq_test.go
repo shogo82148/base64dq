@@ -451,6 +451,26 @@ func TestDecoderCorrupt(t *testing.T) {
 	}
 }
 
+func TestDecoderBuffering(t *testing.T) {
+	for bs := 1; bs <= 12; bs++ {
+		decoder := NewDecoder(StdEncoding, strings.NewReader(bigtest.encoded))
+		buf := make([]byte, len(bigtest.decoded)+12)
+		var total int
+		var n int
+		var err error
+		for total = 0; total < len(bigtest.decoded) && err == nil; {
+			n, err = decoder.Read(buf[total : total+bs])
+			total += n
+		}
+		if err != nil && err != io.EOF {
+			t.Errorf("Read from %q at pos %d = %d, unexpected error %v", bigtest.encoded, total, n, err)
+		}
+		if string(buf[0:total]) != bigtest.decoded {
+			t.Errorf("Decoding/%d of %q = %q, want %q", bs, bigtest.encoded, string(buf[0:total]), bigtest.decoded)
+		}
+	}
+}
+
 func BenchmarkEncodeToString(b *testing.B) {
 	data := make([]byte, 8192)
 	b.SetBytes(int64(len(data)))

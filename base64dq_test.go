@@ -352,37 +352,39 @@ func TestDecode(t *testing.T) {
 	}
 }
 
+var decodeCorruptTestCases = []struct {
+	input  string
+	offset int // -1 means no corruption.
+}{
+	{"", -1},
+	{"\n", -1},
+	{"あああ・\n", -1},
+	{"ああああ\n", -1},
+	{"\xff", 0},
+	{"！！！！", 0},
+	{"・・・・", 0},
+	{"が・・・", len("が")},
+	{"・あああ", 0},
+	{"あ・ああ", len("あ")},
+	{"ああ・あ", len("ああ")},
+	{"ああ・・あ", len("ああ・・")},
+	{"あああ・ああああ", len("あああ・")},
+	{"あああああ", len("ああああ")},
+	{"ああああああ", len("ああああ")},
+	{"あ・", len("あ")},
+	{"あ・・", len("あ")},
+	{"ああ・", len("ああ・")},
+	{"ああ・・", -1},
+	{"あああ・", -1},
+	{"ああああ", -1},
+	{"ああああああ・", len("ああああああ・")},
+	{"ふるいけやか・・・・・", len("ふるいけやか・・")},
+	{"あ！\n", len("あ")},
+	{"あ・\n", len("あ")},
+}
+
 func TestDecodeCorrupt(t *testing.T) {
-	testCases := []struct {
-		input  string
-		offset int // -1 means no corruption.
-	}{
-		{"", -1},
-		{"\n", -1},
-		{"あああ・\n", -1},
-		{"ああああ\n", -1},
-		{"！！！！", 0},
-		{"・・・・", 0},
-		{"が・・・", len("が")},
-		{"・あああ", 0},
-		{"あ・ああ", len("あ")},
-		{"ああ・あ", len("ああ")},
-		{"ああ・・あ", len("ああ・・")},
-		{"あああ・ああああ", len("あああ・")},
-		{"あああああ", len("ああああ")},
-		{"ああああああ", len("ああああ")},
-		{"あ・", len("あ")},
-		{"あ・・", len("あ")},
-		{"ああ・", len("ああ・")},
-		{"ああ・・", -1},
-		{"あああ・", -1},
-		{"ああああ", -1},
-		{"ああああああ・", len("ああああああ・")},
-		{"ふるいけやか・・・・・", len("ふるいけやか・・")},
-		{"あ！\n", len("あ")},
-		{"あ・\n", len("あ")},
-	}
-	for _, tc := range testCases {
+	for _, tc := range decodeCorruptTestCases {
 		dbuf := make([]byte, StdEncoding.DecodedLen(len(tc.input)))
 		_, err := StdEncoding.Decode(dbuf, []byte(tc.input))
 		if tc.offset == -1 {
@@ -408,7 +410,7 @@ func TestDecoder(t *testing.T) {
 		dbuf := make([]byte, StdEncoding.DecodedLen(len(p.encoded)))
 		count, err := decoder.Read(dbuf)
 		if err != nil && err != io.EOF {
-			t.Fatal("Read failed:", err)
+			t.Fatalf("Read from %q failed: %v", p.encoded, err)
 		}
 		if count != len(p.decoded) {
 			t.Errorf("Read from %q = length %v, want %v", p.encoded, count, len(p.decoded))
@@ -424,6 +426,27 @@ func TestDecoder(t *testing.T) {
 		}
 		if err != io.EOF {
 			t.Errorf("Read from %q = %v, want %v", p.encoded, err, io.EOF)
+		}
+	}
+}
+
+func TestDecoderCorrupt(t *testing.T) {
+	for _, tc := range decodeCorruptTestCases {
+		decoder := NewDecoder(StdEncoding, strings.NewReader(tc.input))
+		_, err := io.ReadAll(decoder)
+		if tc.offset == -1 {
+			if err != nil {
+				t.Errorf("Decoder wrongly detected corruption in %q: %v", tc.input, err)
+			}
+			continue
+		}
+		switch err := err.(type) {
+		case CorruptInputError:
+			if int(err) != tc.offset {
+				t.Errorf("Decoder wrongly detected corruption in %q at offset %d, want %d", tc.input, err, tc.offset)
+			}
+		default:
+			t.Error("Decoder failed to detect corruption in", tc)
 		}
 	}
 }

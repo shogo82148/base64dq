@@ -7,6 +7,7 @@
 package base64dq
 
 import (
+	"errors"
 	"io"
 	"sort"
 	"strconv"
@@ -383,17 +384,127 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 type decoder struct {
 	enc *Encoding
 	r   *runeReader
-	err error
 
 	// buffer for input
 	n    int64   // total bytes consumed
-	si   int     // index of first source byte in buf
+	si   int     // index of first source byte
 	buf  [4]byte // source bytes waiting to be decoded
 	nbuf int     // number of bytes in buf
 
 	// buffer for output
 	out  [3]byte // leftover decoded bytes from last Read
 	nout int     // number of bytes in out
+}
+
+func (d *decoder) decodeQuantum() error {
+	for d.nbuf < len(d.buf) {
+		r, size, err := d.r.ReadRune()
+		if errors.Is(err, io.EOF) {
+			switch {
+			case d.nbuf == 0:
+				return err
+			case d.nbuf == 1:
+				return CorruptInputError(d.n)
+			case d.enc.padChar != NoPadding:
+				return CorruptInputError(d.n)
+			}
+			d.si += size
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if r == utf8.RuneError {
+			return CorruptInputError(d.n)
+		}
+		if r == '\n' || r == '\r' {
+			d.si += size
+			continue
+		}
+
+		out := d.enc.decode.search(r)
+		if out != 0xFF {
+			d.buf[d.nbuf] = out
+			d.nbuf++
+			d.si += size
+			continue
+		}
+
+		if r != d.enc.padChar {
+			return CorruptInputError(d.n + int64(d.si))
+		}
+
+		// We've reached the end and there's padding
+		switch d.nbuf {
+		case 0, 1:
+			// incorrect padding
+			return CorruptInputError(d.n + int64(d.si))
+		case 2:
+			// "・・" is expected, the first "・" is already consumed.
+			pad := d.si
+			d.si += size
+			for {
+				r, size, err = d.r.ReadRune()
+				if errors.Is(err, io.EOF) {
+					// not enough padding
+					return CorruptInputError(d.n + int64(d.si))
+				}
+				if err != nil {
+					return err
+				}
+				if r != '\n' && r != '\r' {
+					break
+				}
+				d.si += size
+			}
+			if r != d.enc.padChar {
+				// incorrect padding
+				return CorruptInputError(d.n + int64(pad))
+			}
+			d.si += size
+		default:
+			d.si += size
+		}
+
+		// skip over newlines
+		for {
+			r, size, err = d.r.ReadRune()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if r != '\n' && r != '\r' {
+				// trailing garbage
+				return CorruptInputError(d.n + int64(d.si))
+			}
+			d.si += size
+		}
+		break
+	}
+
+	// Convert 4x 6bit source bytes into 3 bytes
+	val := uint(d.buf[0])<<18 | uint(d.buf[1])<<12 | uint(d.buf[2])<<6 | uint(d.buf[3])
+	d.out = [3]byte{byte(val >> 16), byte(val >> 8), byte(val >> 0)}
+	switch d.nbuf {
+	case 4:
+		d.nout = 3
+	case 3:
+		d.nout = 2
+		if d.enc.strict && d.out[2] != 0 {
+			return CorruptInputError(d.n)
+		}
+	case 2:
+		d.nout = 1
+		if d.enc.strict && (d.out[1] != 0 || d.out[2] != 0) {
+			return CorruptInputError(d.n)
+		}
+	}
+	d.n += int64(d.si)
+	d.si = 0
+	d.nbuf = 0
+	return nil
 }
 
 func (d *decoder) Read(p []byte) (n int, err error) {
@@ -405,83 +516,9 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 	}
 
 	for {
-	INNER:
-		for d.nbuf < len(d.buf) {
-			r, size, err := d.r.ReadRune()
-			d.si += size
-			if err != nil {
-				d.err = err
-				break
-			}
-			if r == utf8.RuneError {
-				return n, CorruptInputError(d.n)
-			}
-
-			out := d.enc.decode.search(r)
-			if out != 0xFF {
-				d.buf[d.nbuf] = out
-				d.nbuf++
-				continue
-			}
-
-			if r == '\n' || r == '\r' {
-				continue
-			}
-
-			if r != d.enc.padChar {
-				return n, CorruptInputError(d.n)
-			}
-
-			// We've reached the end and there's padding
-			switch d.nbuf {
-			case 0, 1:
-				// incorrect padding
-				return n, CorruptInputError(d.n)
-			case 2:
-				// "・・" is expected, the first "・" is already consumed.
-				// skip over newlines
-				for d.err != nil {
-					r, size, err := d.r.ReadRune()
-					d.si += size
-					if err != nil {
-						d.err = err
-						break INNER
-					}
-					if r != d.enc.padChar && r != '\n' && r != '\r' {
-						// incorrect padding
-						return n, CorruptInputError(d.n)
-					}
-				}
-			}
-		}
-
-		if d.nbuf == 0 {
-			err = d.err
-			d.err = nil
+		if err := d.decodeQuantum(); err != nil {
 			return n, err
 		}
-
-		// Convert 4x 6bit source bytes into 3 bytes
-		val := uint(d.buf[0])<<18 | uint(d.buf[1])<<12 | uint(d.buf[2])<<6 | uint(d.buf[3])
-		d.out = [3]byte{byte(val >> 16), byte(val >> 8), byte(val >> 0)}
-		switch d.nbuf {
-		case 4:
-			d.nout = 3
-		case 3:
-			d.nout = 2
-			if d.enc.strict && d.out[2] != 0 {
-				return n, CorruptInputError(d.n)
-			}
-		case 2:
-			d.nout = 1
-			if d.enc.strict && (d.out[1] != 0 || d.out[2] != 0) {
-				return n, CorruptInputError(d.n)
-			}
-		}
-		d.n += int64(d.si)
-		d.si = 0
-		d.nbuf = 0
-
 		nn := copy(p, d.out[:d.nout])
 		p = p[nn:]
 		n += nn

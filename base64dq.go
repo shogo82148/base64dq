@@ -190,7 +190,7 @@ func (e CorruptInputError) Error() string {
 func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 	var err error
 	n := 0
-	si := 0
+	si, sj, sk := 0, 0, 0
 	dlen := 4
 
 	for si < len(src) {
@@ -203,7 +203,7 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 				case j == 0:
 					return n, nil
 				case j == 1, enc.padChar != NoPadding:
-					return n, CorruptInputError(si - 1)
+					return n, CorruptInputError(sj)
 				}
 				dlen = j
 				break
@@ -212,7 +212,7 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 			if r == utf8.RuneError {
 				return n, CorruptInputError(si)
 			}
-			si += size
+			si, sj, sk = si+size, si, sj
 
 			out := enc.decode.search(r)
 			if out != 0xFF {
@@ -226,19 +226,19 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 			}
 
 			if r != enc.padChar {
-				return n, CorruptInputError(si - 1)
+				return n, CorruptInputError(sj)
 			}
 
 			// We've reached the end and there's padding
 			switch j {
 			case 0, 1:
 				// incorrect padding
-				return n, CorruptInputError(si - 1)
+				return n, CorruptInputError(sj)
 			case 2:
-				// "==" is expected, the first "=" is already consumed.
+				// "・・" is expected, the first "・" is already consumed.
 				// skip over newlines
 				for si < len(src) && (src[si] == '\n' || src[si] == '\r') {
-					si++
+					si, sj, sk = si+1, si, sj
 				}
 				if si == len(src) {
 					// not enough padding
@@ -247,14 +247,14 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 				pad, size := utf8.DecodeRune(src[si:])
 				if pad != enc.padChar {
 					// incorrect padding
-					return n, CorruptInputError(si - 1)
+					return n, CorruptInputError(sj)
 				}
 				si += size
 			}
 
 			// skip over newlines
 			for si < len(src) && (src[si] == '\n' || src[si] == '\r') {
-				si++
+				si, sj, sk = si+1, si, sj
 			}
 			if si < len(src) {
 				// trailing garbage
@@ -276,14 +276,14 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 		case 3:
 			dst[n+1] = dbuf[1]
 			if enc.strict && dbuf[2] != 0 {
-				return n, CorruptInputError(si - 1)
+				return n, CorruptInputError(sj)
 			}
 			dbuf[1] = 0
 			fallthrough
 		case 2:
 			dst[n+0] = dbuf[0]
 			if enc.strict && (dbuf[1] != 0 || dbuf[2] != 0) {
-				return n, CorruptInputError(si - 2)
+				return n, CorruptInputError(sk)
 			}
 		}
 		n += dlen - 1

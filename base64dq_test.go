@@ -279,6 +279,56 @@ func TestDecode(t *testing.T) {
 	}
 }
 
+func TestDecodeCorrupt(t *testing.T) {
+	testCases := []struct {
+		input  string
+		offset int // -1 means no corruption.
+	}{
+		{"", -1},
+		{"\n", -1},
+		{"あああ・\n", -1},
+		{"ああああ\n", -1},
+		{"！！！！", 0},
+		{"・・・・", 0},
+		{"が・・・", len("が")},
+		{"・あああ", 0},
+		{"あ・ああ", len("あ")},
+		{"ああ・あ", len("ああ")},
+		{"ああ・・あ", len("ああ・・")},
+		{"あああ・ああああ", len("あああ・")},
+		{"あああああ", len("ああああ")},
+		{"ああああああ", len("ああああ")},
+		{"あ・", len("あ")},
+		{"あ・・", len("あ")},
+		{"ああ・", len("ああ・")},
+		{"ああ・・", -1},
+		{"あああ・", -1},
+		{"ああああ", -1},
+		{"ああああああ・", len("ああああああ・")},
+		{"ふるいけやか・・・・・", len("ふるいけやか・・")},
+		{"あ！\n", len("あ")},
+		{"あ・\n", len("あ")},
+	}
+	for _, tc := range testCases {
+		dbuf := make([]byte, StdEncoding.DecodedLen(len(tc.input)))
+		_, err := StdEncoding.Decode(dbuf, []byte(tc.input))
+		if tc.offset == -1 {
+			if err != nil {
+				t.Error("Decoder wrongly detected corruption in", tc.input)
+			}
+			continue
+		}
+		switch err := err.(type) {
+		case CorruptInputError:
+			if int(err) != tc.offset {
+				t.Errorf("Decoder wrongly detected corruption in %q at offset %d, want %d", tc.input, err, tc.offset)
+			}
+		default:
+			t.Error("Decoder failed to detect corruption in", tc)
+		}
+	}
+}
+
 func BenchmarkEncodeToString(b *testing.B) {
 	data := make([]byte, 8192)
 	b.SetBytes(int64(len(data)))

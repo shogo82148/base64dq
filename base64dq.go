@@ -7,6 +7,7 @@
 package base64dq
 
 import (
+	"errors"
 	"io"
 	"sort"
 	"strconv"
@@ -378,6 +379,208 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 	}
 
 	return n, nil
+}
+
+type decoder struct {
+	enc *Encoding
+	r   *runeReader
+
+	// buffer for input
+	n    int64   // total bytes consumed
+	si   int     // index of first source byte
+	buf  [4]byte // source bytes waiting to be decoded
+	nbuf int     // number of bytes in buf
+
+	// buffer for output
+	out  [3]byte // leftover decoded bytes from last Read
+	nout int     // number of bytes in out
+}
+
+func (d *decoder) decodeQuantum() error {
+	for d.nbuf < len(d.buf) {
+		r, size, err := d.r.ReadRune()
+		if errors.Is(err, io.EOF) {
+			switch {
+			case d.nbuf == 0:
+				return err
+			case d.nbuf == 1:
+				return CorruptInputError(d.n)
+			case d.enc.padChar != NoPadding:
+				return CorruptInputError(d.n)
+			}
+			d.si += size
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if r == utf8.RuneError {
+			return CorruptInputError(d.n)
+		}
+		if r == '\n' || r == '\r' {
+			d.si += size
+			continue
+		}
+
+		out := d.enc.decode.search(r)
+		if out != 0xFF {
+			d.buf[d.nbuf] = out
+			d.nbuf++
+			d.si += size
+			continue
+		}
+
+		if r != d.enc.padChar {
+			return CorruptInputError(d.n + int64(d.si))
+		}
+
+		// We've reached the end and there's padding
+		switch d.nbuf {
+		case 0, 1:
+			// incorrect padding
+			return CorruptInputError(d.n + int64(d.si))
+		case 2:
+			// "・・" is expected, the first "・" is already consumed.
+			pad := d.si
+			d.si += size
+			for {
+				r, size, err = d.r.ReadRune()
+				if errors.Is(err, io.EOF) {
+					// not enough padding
+					return CorruptInputError(d.n + int64(d.si))
+				}
+				if err != nil {
+					return err
+				}
+				if r != '\n' && r != '\r' {
+					break
+				}
+				d.si += size
+			}
+			if r != d.enc.padChar {
+				// incorrect padding
+				return CorruptInputError(d.n + int64(pad))
+			}
+			d.si += size
+		default:
+			d.si += size
+		}
+
+		// skip over newlines
+		for {
+			r, size, err = d.r.ReadRune()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			if r != '\n' && r != '\r' {
+				// trailing garbage
+				return CorruptInputError(d.n + int64(d.si))
+			}
+			d.si += size
+		}
+		break
+	}
+
+	// Convert 4x 6bit source bytes into 3 bytes
+	val := uint(d.buf[0])<<18 | uint(d.buf[1])<<12 | uint(d.buf[2])<<6 | uint(d.buf[3])
+	d.out = [3]byte{byte(val >> 16), byte(val >> 8), byte(val >> 0)}
+	switch d.nbuf {
+	case 4:
+		d.nout = 3
+	case 3:
+		d.nout = 2
+		if d.enc.strict && d.out[2] != 0 {
+			return CorruptInputError(d.n)
+		}
+	case 2:
+		d.nout = 1
+		if d.enc.strict && (d.out[1] != 0 || d.out[2] != 0) {
+			return CorruptInputError(d.n)
+		}
+	}
+	d.n += int64(d.si)
+	d.si = 0
+	d.nbuf = 0
+	return nil
+}
+
+func (d *decoder) Read(p []byte) (n int, err error) {
+	if d.nout > 0 {
+		n = copy(p, d.out[:d.nout])
+		d.nout -= n
+		copy(d.out[:], d.out[n:])
+		return n, nil
+	}
+
+	for {
+		if err := d.decodeQuantum(); err != nil {
+			return n, err
+		}
+		nn := copy(p, d.out[:d.nout])
+		p = p[nn:]
+		n += nn
+		d.nout -= nn
+		copy(d.out[:], d.out[nn:])
+		if len(p) <= 0 || d.r.Buffered() < 4*d.enc.maxSize {
+			break
+		}
+	}
+	return
+}
+
+// runeReader is a simplified version of bufio.Reader that only supports.
+type runeReader struct {
+	wrapped io.Reader
+	buf     [4096]byte
+	r, w    int
+	err     error
+}
+
+// fill reads a new chunk into the buffer.
+func (r *runeReader) fill() {
+	// Slide existing data to beginning.
+	if r.r > 0 {
+		copy(r.buf[:], r.buf[r.r:r.w])
+		r.w -= r.r
+		r.r = 0
+	}
+
+	if r.w >= len(r.buf) {
+		panic("base64dq: tried to fill full buffer")
+	}
+
+	n, err := r.wrapped.Read(r.buf[r.w:])
+	r.w += n
+	r.err = err
+}
+
+func (r *runeReader) ReadRune() (ch rune, size int, err error) {
+	for r.r+utf8.UTFMax > r.w && !utf8.FullRune(r.buf[r.r:r.w]) && r.err == nil && r.w-r.r < len(r.buf) {
+		r.fill()
+	}
+	if r.r == r.w {
+		return 0, 0, r.readErr()
+	}
+	ch, size = utf8.DecodeRune(r.buf[r.r:r.w])
+	r.r += size
+	return ch, size, nil
+}
+
+// Buffered returns the number of bytes that can be read from the current buffer.
+func (r *runeReader) Buffered() int { return r.w - r.r }
+
+func (b *runeReader) readErr() error {
+	err := b.err
+	b.err = nil
+	return err
+}
+
+// NewDecoder constructs a new base64 stream decoder.
+func NewDecoder(enc *Encoding, r io.Reader) io.Reader {
+	return &decoder{enc: enc, r: &runeReader{wrapped: r}}
 }
 
 // DecodeString returns the bytes represented by the base64 string s.

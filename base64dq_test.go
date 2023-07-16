@@ -205,6 +205,11 @@ var encodingTests = []encodingTest{
 	{RawStdEncoding.Strict(), rawRef},
 }
 
+var bigtest = testpair{
+	"Twas brillig, and the slithy toves",
+	"にくほめへじいもへらよがふきよりしういめふらちむほきめよけくせがひねつるまていぜふぢはよへご・・",
+}
+
 func TestEncode(t *testing.T) {
 	for _, p := range pairs {
 		for _, tt := range encodingTests {
@@ -221,6 +226,49 @@ func TestEncode(t *testing.T) {
 		encoded2 := std2dq.Replace(base64.StdEncoding.EncodeToString([]byte(p.decoded)))
 		if encoded != encoded2 {
 			t.Errorf("Encode(%q) = %q, want %q", p.decoded, encoded, encoded2)
+		}
+	}
+}
+
+func TestEncoder(t *testing.T) {
+	for _, p := range pairs {
+		bb := &strings.Builder{}
+		encoder := NewEncoder(StdEncoding, bb)
+		if _, err := encoder.Write([]byte(p.decoded)); err != nil {
+			t.Errorf("Encoder.Write(%q) error: %v", p.decoded, err)
+		}
+		if err := encoder.Close(); err != nil {
+			t.Error("Encoder.Close() error:", err)
+		}
+		if bb.String() != p.encoded {
+			t.Errorf("Encode(%q) = %q, want %q", p.decoded, bb.String(), p.encoded)
+		}
+	}
+}
+
+func TestEncoderBuffering(t *testing.T) {
+	input := []byte(bigtest.decoded)
+	for bs := 1; bs <= 12; bs++ {
+		bb := &strings.Builder{}
+		encoder := NewEncoder(StdEncoding, bb)
+		for pos := 0; pos < len(input); pos += bs {
+			end := pos + bs
+			if end > len(input) {
+				end = len(input)
+			}
+			n, err := encoder.Write(input[pos:end])
+			if err != nil {
+				t.Errorf("Write(%q) error: %v", input[pos:end], err)
+			}
+			if n != end-pos {
+				t.Errorf("Write(%q) gave length %v, want %v", input[pos:end], n, end-pos)
+			}
+		}
+		if err := encoder.Close(); err != nil {
+			t.Error("Close gave error:", err)
+		}
+		if bb.String() != bigtest.encoded {
+			t.Errorf("Encoding/%d of %q = %q, want %q", bs, bigtest.decoded, bb.String(), bigtest.encoded)
 		}
 	}
 }

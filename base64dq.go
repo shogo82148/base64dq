@@ -242,7 +242,7 @@ func (e *encoder) Write(p []byte) (n int, err error) {
 	copy(e.buf[:], p)
 	e.nbuf = len(p)
 	n += len(p)
-	return 0, nil
+	return n, nil
 }
 
 // Close flushes any pending output from the encoder.

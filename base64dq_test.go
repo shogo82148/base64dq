@@ -225,6 +225,17 @@ func TestEncode(t *testing.T) {
 	}
 }
 
+const emoji = "😀😃😄😁😆😅😂🙂🙃😉😊😇😍😘😗☺️😚😙😋😛😜😝🤑🤗🤔🤐😐😑😶😏😒🙄😬😌😔😪😴😷🤒🤕😵😎🤓😕😟🙁☹️😮😯😲😳😦😧😨😰😥😢😭😱😖😣😞"
+
+var emojiEncode = NewEncoding(emoji)
+
+func TestEncode_Emoji(t *testing.T) {
+	for _, p := range pairs {
+		encoded := emojiEncode.EncodeToString([]byte(p.decoded))
+		t.Log(encoded)
+	}
+}
+
 func TestEncodedLen(t *testing.T) {
 	for _, tt := range []struct {
 		enc  *Encoding

@@ -285,8 +285,10 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 				switch {
 				case j == 0:
 					return n, nil
-				case j == 1, enc.padChar != NoPadding:
+				case j == 1:
 					return n, CorruptInputError(sj)
+				case enc.padChar != NoPadding:
+					return n, CorruptInputError(sk)
 				}
 				dlen = j
 				break

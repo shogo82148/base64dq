@@ -3,6 +3,7 @@ package base64dq
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 )
@@ -397,6 +398,32 @@ func TestDecodeCorrupt(t *testing.T) {
 			}
 		default:
 			t.Error("Decoder failed to detect corruption in", tc)
+		}
+	}
+}
+
+func TestDecoder(t *testing.T) {
+	for _, p := range pairs {
+		decoder := NewDecoder(StdEncoding, strings.NewReader(p.encoded))
+		dbuf := make([]byte, StdEncoding.DecodedLen(len(p.encoded)))
+		count, err := decoder.Read(dbuf)
+		if err != nil && err != io.EOF {
+			t.Fatal("Read failed", err)
+		}
+		if count != len(p.decoded) {
+			t.Errorf("Read from %q = length %v, want %v", p.encoded, count, len(p.decoded))
+		}
+		if string(dbuf[0:count]) != p.decoded {
+			t.Errorf("Decoding of %q = %q, want %q", p.encoded, string(dbuf[0:count]), p.decoded)
+		}
+		if err != io.EOF {
+			count, err = decoder.Read(dbuf)
+			if count != 0 {
+				t.Errorf("Read after EOF from %q = %d, want 0", p.encoded, count)
+			}
+		}
+		if err != io.EOF {
+			t.Errorf("Read from %q = %v, want %v", p.encoded, err, io.EOF)
 		}
 	}
 }

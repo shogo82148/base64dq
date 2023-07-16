@@ -380,6 +380,88 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 	return n, nil
 }
 
+type decoder struct {
+	err     error
+	readErr error // error from r.Read
+	enc     *Encoding
+	r       io.Reader
+	buf     [1024]byte // leftover input
+	nbuf    int
+	out     []byte // leftover decoded output
+	outbuf  [1024 / 4 * 3]byte
+}
+
+func (d *decoder) Read(p []byte) (n int, err error) {
+	// Use leftover decoded output from last read.
+	if len(d.out) > 0 {
+		n = copy(p, d.out)
+		d.out = d.out[n:]
+		return n, nil
+	}
+
+	if d.err != nil {
+		return 0, d.err
+	}
+
+	// This code assumes that d.r strips supported whitespace ('\r' and '\n').
+
+	// Refill buffer
+	for d.nbuf < 4 && d.readErr == nil {
+		var nn int
+		nn, d.readErr = d.r.Read(d.buf[d.nbuf:])
+		d.nbuf += nn
+	}
+
+	if d.nbuf < 4 {
+		d.err = d.readErr
+		if d.err == io.EOF && d.nbuf > 0 {
+			d.err = io.ErrUnexpectedEOF
+		}
+		return 0, d.err
+	}
+
+	// Decode chunk into d.out.
+	var nw int
+	nw, d.err = d.enc.Decode(d.outbuf[:], d.buf[:d.nbuf])
+	d.out = d.outbuf[:nw]
+	d.nbuf = 0
+
+	// copy into p.
+	n = copy(p, d.out)
+	d.out = d.out[n:]
+	return
+}
+
+type newlineFilteringReader struct {
+	wrapped io.Reader
+}
+
+func (r *newlineFilteringReader) Read(p []byte) (int, error) {
+	n, err := r.wrapped.Read(p)
+	for n > 0 {
+		offset := 0
+		for i, b := range p[:n] {
+			if b != '\r' && b != '\n' {
+				if i != offset {
+					p[offset] = b
+				}
+				offset++
+			}
+		}
+		if offset > 0 {
+			return offset, err
+		}
+		// Previous buffer entirely whitespace, read again
+		n, err = r.wrapped.Read(p)
+	}
+	return n, err
+}
+
+// NewDecoder constructs a new base64 stream decoder.
+func NewDecoder(enc *Encoding, r io.Reader) io.Reader {
+	return &decoder{enc: enc, r: &newlineFilteringReader{r}}
+}
+
 // DecodeString returns the bytes represented by the base64 string s.
 func (enc *Encoding) DecodeString(s string) ([]byte, error) {
 	dbuf := make([]byte, enc.DecodedLen(len(s)))

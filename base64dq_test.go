@@ -408,7 +408,7 @@ func TestDecoder(t *testing.T) {
 		dbuf := make([]byte, StdEncoding.DecodedLen(len(p.encoded)))
 		count, err := decoder.Read(dbuf)
 		if err != nil && err != io.EOF {
-			t.Fatal("Read failed", err)
+			t.Fatal("Read failed:", err)
 		}
 		if count != len(p.decoded) {
 			t.Errorf("Read from %q = length %v, want %v", p.encoded, count, len(p.decoded))

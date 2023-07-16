@@ -493,3 +493,21 @@ func BenchmarkDecodeString(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkDecoder(b *testing.B) {
+	sizes := []int{2, 4, 8, 64, 8192}
+	benchFunc := func(b *testing.B, benchSize int) {
+		data := StdEncoding.EncodeToString(make([]byte, benchSize))
+		b.SetBytes(int64(len(data)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			dec := NewDecoder(StdEncoding, strings.NewReader(data))
+			io.Copy(io.Discard, dec)
+		}
+	}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("%d", size), func(b *testing.B) {
+			benchFunc(b, size)
+		})
+	}
+}

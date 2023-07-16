@@ -7,6 +7,7 @@
 package base64dq
 
 import (
+	"io"
 	"sort"
 	"strconv"
 	"unicode/utf8"
@@ -189,8 +190,82 @@ func (enc *Encoding) EncodedLen(n int) int {
 	return ret * enc.maxSize // maximum # bytes: utf8.UTFMax bytes per char
 }
 
+type encoder struct {
+	err  error
+	enc  *Encoding
+	w    io.Writer
+	buf  [3]byte    // buffered data waiting to be encoded
+	nbuf int        // number of bytes in buf
+	out  [1024]byte // output buffer
+}
+
+func (e *encoder) Write(p []byte) (n int, err error) {
+	if e.err != nil {
+		return 0, e.err
+	}
+
+	// Leading fringe.
+	if e.nbuf > 0 {
+		var i int
+		for i = 0; i < len(p) && e.nbuf < 3; i++ {
+			e.buf[e.nbuf] = p[i]
+			e.nbuf++
+		}
+		n += i
+		p = p[i:]
+		if e.nbuf < 3 {
+			return
+		}
+		size := e.enc.Encode(e.out[:], e.buf[:])
+		if _, e.err = e.w.Write(e.out[:size]); e.err != nil {
+			return n, e.err
+		}
+		e.nbuf = 0
+	}
+
+	// Large interior chunks.
+	for len(p) >= 3 {
+		nn := len(e.out) / e.enc.maxSize / 4 * 3
+		if nn > len(p) {
+			nn = len(p)
+			nn -= nn % 3
+		}
+		size := e.enc.Encode(e.out[:], p[:nn])
+		if _, e.err = e.w.Write(e.out[:size]); e.err != nil {
+			return n, e.err
+		}
+		n += nn
+		p = p[nn:]
+	}
+
+	// Trailing fringe.
+	copy(e.buf[:], p)
+	e.nbuf = len(p)
+	n += len(p)
+	return 0, nil
+}
+
+// Close flushes any pending output from the encoder.
+// It is an error to call Write after calling Close.
+func (e *encoder) Close() error {
+	// If there's anything left in the buffer, flush it out
+	if e.err == nil && e.nbuf > 0 {
+		size := e.enc.Encode(e.out[:], e.buf[:e.nbuf])
+		_, e.err = e.w.Write(e.out[:size])
+		e.nbuf = 0
+	}
+	return e.err
+}
+
+// NewEncoder returns a new base64 stream encoder.
+func NewEncoder(enc *Encoding, w io.Writer) io.WriteCloser {
+	return &encoder{enc: enc, w: w}
+}
+
+// CorruptInputError is returned when the input is not a valid base64dq.
 type CorruptInputError int64
 
+// Error implements the error interface.
 func (e CorruptInputError) Error() string {
 	return "illegal base64dq data at input byte " + strconv.FormatInt(int64(e), 10)
 }

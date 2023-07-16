@@ -225,6 +225,22 @@ func TestEncode(t *testing.T) {
 	}
 }
 
+func TestEncoder(t *testing.T) {
+	for _, p := range pairs {
+		bb := &strings.Builder{}
+		encoder := NewEncoder(StdEncoding, bb)
+		if _, err := encoder.Write([]byte(p.decoded)); err != nil {
+			t.Errorf("Encoder.Write(%q) error: %v", p.decoded, err)
+		}
+		if err := encoder.Close(); err != nil {
+			t.Error("Encoder.Close() error:", err)
+		}
+		if bb.String() != p.encoded {
+			t.Errorf("Encode(%q) = %q, want %q", p.decoded, bb.String(), p.encoded)
+		}
+	}
+}
+
 const emoji = "😀😃😄😁😆😅😂🙂🙃😉😊😇😍😘😗☺️😚😙😋😛😜😝🤑🤗🤔🤐😐😑😶😏😒🙄😬😌😔😪😴😷🤒🤕😵😎🤓😕😟🙁☹️😮😯😲😳😦😧😨😰😥😢😭😱😖😣😞"
 
 var emojiEncode = NewEncoding(emoji)

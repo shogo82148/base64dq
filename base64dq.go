@@ -37,6 +37,7 @@ func (dm *decodeMap) sort() {
 type Encoding struct {
 	encode  [64]string
 	decode  decodeMap
+	maxSize int
 	padChar rune
 	strict  bool
 }
@@ -64,6 +65,7 @@ const (
 func NewEncoding(encoder string) *Encoding {
 	e := &Encoding{
 		padChar: StdPadding,
+		maxSize: 1,
 	}
 
 	var pos [65]int
@@ -84,6 +86,12 @@ func NewEncoding(encoder string) *Encoding {
 
 	for i := 0; i < 64; i++ {
 		e.encode[i] = encoder[pos[i]:pos[i+1]]
+		if size := pos[i+1] - pos[i]; size > e.maxSize {
+			e.maxSize = size
+		}
+	}
+	if size := utf8.RuneLen(e.padChar); size > e.maxSize {
+		e.maxSize = size
 	}
 	e.decode.sort()
 
@@ -178,7 +186,7 @@ func (enc *Encoding) EncodedLen(n int) int {
 	} else {
 		ret = (n + 2) / 3 * 4 // minimum # 4-char quanta, 3 bytes each
 	}
-	return ret * utf8.UTFMax // maximum # bytes: utf8.UTFMax bytes per char
+	return ret * enc.maxSize // maximum # bytes: utf8.UTFMax bytes per char
 }
 
 type CorruptInputError int64

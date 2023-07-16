@@ -242,17 +242,30 @@ func TestEncodedLen(t *testing.T) {
 		n    int
 		want int
 	}{
+		// Japanese hiragana has 3 bytes per character in utf-8.
+		// So we need 3 times larger buffer than the standard base64.
 		{RawStdEncoding, 0, 0},
-		{RawStdEncoding, 1, 8},
-		{RawStdEncoding, 2, 12},
-		{RawStdEncoding, 3, 16},
-		{RawStdEncoding, 7, 40},
+		{RawStdEncoding, 1, 2 * 3},
+		{RawStdEncoding, 2, 3 * 3},
+		{RawStdEncoding, 3, 4 * 3},
+		{RawStdEncoding, 7, 10 * 3},
+
+		// We need 3 times larger buffer than the standard base64.
 		{StdEncoding, 0, 0},
-		{StdEncoding, 1, 16},
-		{StdEncoding, 2, 16},
-		{StdEncoding, 3, 16},
-		{StdEncoding, 4, 32},
-		{StdEncoding, 7, 48},
+		{StdEncoding, 1, 4 * 3},
+		{StdEncoding, 2, 4 * 3},
+		{StdEncoding, 3, 4 * 3},
+		{StdEncoding, 4, 8 * 3},
+		{StdEncoding, 7, 12 * 3},
+
+		// Emoji has 4 bytes per character in utf-8.
+		// We need larger buffer than Japanese hiragana.
+		{emojiEncode, 0, 0},
+		{emojiEncode, 1, 4 * 4},
+		{emojiEncode, 2, 4 * 4},
+		{emojiEncode, 3, 4 * 4},
+		{emojiEncode, 4, 8 * 4},
+		{emojiEncode, 7, 12 * 4},
 	} {
 		if got := tt.enc.EncodedLen(tt.n); got != tt.want {
 			t.Errorf("EncodedLen(%d): got %d, want %d", tt.n, got, tt.want)
@@ -349,7 +362,7 @@ func BenchmarkEncodeToString(b *testing.B) {
 }
 
 func BenchmarkEncodeToString_Std(b *testing.B) {
-	enc := NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+	enc := NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding('=')
 	data := make([]byte, 8192)
 	b.ResetTimer()
 	b.SetBytes(int64(len(data)))

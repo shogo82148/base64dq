@@ -16,7 +16,10 @@ func validAlphabets(alphabets string) bool {
 	if utf8.RuneCountInString(alphabets) != 64 {
 		return false
 	}
-	if strings.Contains(alphabets, "・") {
+	if strings.ContainsRune(alphabets, utf8.RuneError) {
+		return false
+	}
+	if strings.ContainsAny(alphabets, "・\n\r") {
 		return false
 	}
 	seen := map[rune]bool{}

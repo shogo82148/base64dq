@@ -9,33 +9,10 @@ package base64dq
 import (
 	"errors"
 	"io"
-	"sort"
 	"strconv"
 	"sync"
 	"unicode/utf8"
 )
-
-type decodeMap struct {
-	runes [64]rune
-	bytes [64]byte
-}
-
-func (dm *decodeMap) Len() int {
-	return len(dm.runes)
-}
-
-func (dm *decodeMap) Less(i, j int) bool {
-	return dm.runes[i] < dm.runes[j]
-}
-
-func (dm *decodeMap) Swap(i, j int) {
-	dm.runes[i], dm.runes[j] = dm.runes[j], dm.runes[i]
-	dm.bytes[i], dm.bytes[j] = dm.bytes[j], dm.bytes[i]
-}
-
-func (dm *decodeMap) sort() {
-	sort.Sort(dm)
-}
 
 const (
 	rootNode    = -1
@@ -112,7 +89,6 @@ type Encoding struct {
 	root *node
 
 	encode  [64]string
-	decode  decodeMap
 	maxSize int // maximum number of bytes per rune
 	padChar rune
 	strict  bool
@@ -127,7 +103,6 @@ type Encoding struct {
 func (enc *Encoding) Strict() *Encoding {
 	return &Encoding{
 		encode:  enc.encode,
-		decode:  enc.decode,
 		maxSize: enc.maxSize,
 		padChar: enc.padChar,
 		strict:  true,
@@ -159,8 +134,6 @@ func NewEncoding(encoder string) *Encoding {
 			panic("encoding alphabet contains invalid UTF-8 sequence")
 		}
 		pos[j] = i
-		e.decode.runes[j] = ch
-		e.decode.bytes[j] = byte(j)
 		j++
 	}
 	pos[64] = len(encoder)
@@ -174,7 +147,6 @@ func NewEncoding(encoder string) *Encoding {
 	if size := utf8.RuneLen(e.padChar); size > e.maxSize {
 		e.maxSize = size
 	}
-	e.decode.sort()
 
 	return e
 }
@@ -211,7 +183,6 @@ func (enc *Encoding) WithPadding(padding rune) *Encoding {
 
 	return &Encoding{
 		encode:  enc.encode,
-		decode:  enc.decode,
 		maxSize: maxSize,
 		padChar: padding,
 		strict:  enc.strict,

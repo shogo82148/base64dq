@@ -53,8 +53,14 @@ func buildDFA(entries [64]string, padding rune) *node {
 			v:        paddingNode,
 			children: make([]*node, 256),
 		}
-		pad.children['\n'] = pad
-		pad.children['\r'] = pad
+		pad.children['\n'] = &node{
+			v:        rootNode,
+			children: pad.children,
+		}
+		pad.children['\r'] = &node{
+			v:        rootNode,
+			children: pad.children,
+		}
 
 		var buf [4]byte
 		l := utf8.EncodeRune(buf[:], padding)
@@ -500,7 +506,7 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 	}
 
 	// Refill buffer.
-	if d.pos == d.nbuf {
+	if d.pos >= d.nbuf {
 		d.pos = 0
 		d.nbuf = 0
 		nn := len(p) / 3 * 4 * d.enc.maxSize
@@ -579,10 +585,7 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 						return n, d.err
 					}
 					d.nout = 2
-					d.pos++
-					d.n++
 					d.expectEOF = true
-					return n, nil
 				case 2:
 					d.out[0] = byte(val >> 16)
 					if d.enc.strict && (val&0xFFFF) != 0 {
@@ -590,13 +593,19 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 						return n, d.err
 					}
 					d.nout = 1
-					d.pos++
-					d.n++
 					d.expectEOF = true
-					return n, nil
 				case 3, 4:
 					d.err = CorruptInputError(d.lastRune)
 					return n, d.err
+				}
+				nn := copy(p, d.out[:d.nout])
+				d.nout -= nn
+				copy(d.out[:], d.out[nn:])
+				n += nn
+				if d.expectEOF {
+					d.pos++
+					d.n++
+					break
 				}
 			}
 		}

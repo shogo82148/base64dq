@@ -7,6 +7,7 @@
 package base64dq
 
 import (
+	"errors"
 	"io"
 	"sort"
 	"strconv"
@@ -75,6 +76,9 @@ func buildDFA(entries [64]string, padding rune) *node {
 			v:        paddingNode,
 			children: make([]*node, 256),
 		}
+		pad.children['\n'] = pad
+		pad.children['\r'] = pad
+
 		var buf [4]byte
 		l := utf8.EncodeRune(buf[:], padding)
 		n, m := root, pad
@@ -541,8 +545,19 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 		}
 	}
 
-LOOP:
-	for ; d.pos < d.nbuf; d.pos++ {
+	if d.expectEOF {
+		for ; d.pos < d.nbuf; d.pos, d.n = d.pos+1, d.n+1 {
+			if d.buf[d.pos] != '\n' && d.buf[d.pos] != '\r' {
+				// trailing garbage
+				d.err = CorruptInputError(d.n)
+				return 0, d.err
+			}
+		}
+		d.err = d.readErr
+		return 0, d.err
+	}
+
+	for ; d.pos < d.nbuf; d.pos, d.n = d.pos+1, d.n+1 {
 		b := d.buf[d.pos]
 		d.state = d.state.children[b]
 		if d.state == nil {
@@ -555,10 +570,11 @@ LOOP:
 			continue
 		}
 		if v == 64 {
-			switch d.nbuf {
+			switch d.ndbuf {
 			case 0, 1:
 				// incorrect padding
 				d.err = CorruptInputError(d.lastRune)
+				return n, d.err
 			}
 			d.padCount++
 			v = 0
@@ -567,6 +583,8 @@ LOOP:
 		d.dbuf[d.ndbuf] = byte(v)
 		d.ndbuf++
 		if d.ndbuf == 4 {
+			d.ndbuf = 0
+			d.lastBlock = d.n + 1
 			// Convert 4x 6bit source bytes into 3 bytes
 			val := uint(d.dbuf[0])<<18 | uint(d.dbuf[1])<<12 | uint(d.dbuf[2])<<6 | uint(d.dbuf[3])
 			switch d.padCount {
@@ -585,8 +603,9 @@ LOOP:
 				}
 				n += 2
 				d.pos++
+				d.n++
 				d.expectEOF = true
-				break LOOP
+				return n, nil
 			case 2:
 				p[0] = byte(val >> 16)
 				if d.enc.strict && (val&0xFFFF) != 0 {
@@ -595,16 +614,65 @@ LOOP:
 				}
 				n += 1
 				d.pos++
+				d.n++
 				d.expectEOF = true
-				break LOOP
+				return n, nil
 			case 3, 4:
 				d.err = CorruptInputError(d.lastRune)
 				return n, d.err
 			}
-			d.ndbuf = 0
+		}
+		if d.state.v < 64 {
+			d.lastRune = d.n + 1
 		}
 	}
 	d.err = d.readErr
+	if errors.Is(d.err, io.EOF) {
+		if d.state.v < 0 && d.state.v != rootNode {
+			// invalid rune
+			d.err = CorruptInputError(d.n)
+		}
+
+		// handle remaining bytes and padding
+		if d.ndbuf > 0 {
+			if d.enc.padChar != NoPadding {
+				if d.padCount == 0 {
+					d.err = CorruptInputError(d.lastBlock)
+				} else {
+					d.err = CorruptInputError(d.n)
+				}
+				return n, d.err
+			}
+
+			// Convert 4x 6bit source bytes into 3 bytes
+			for i := d.ndbuf; i < 4; i++ {
+				d.dbuf[i] = 0
+			}
+			val := uint(d.dbuf[0])<<18 | uint(d.dbuf[1])<<12 | uint(d.dbuf[2])<<6 | uint(d.dbuf[3])
+			switch d.ndbuf {
+			case 0, 1:
+				d.err = CorruptInputError(d.n)
+				return n, d.err
+			case 2:
+				p[0] = byte(val >> 16)
+				if d.enc.strict && (val&0xFFFF) != 0 {
+					d.err = CorruptInputError(d.lastRune)
+					return n, d.err
+				}
+				n += 1
+			case 3:
+				p[0] = byte(val >> 16)
+				p[1] = byte(val >> 8)
+				if d.enc.strict && (val&0xFF) != 0 {
+					d.err = CorruptInputError(d.lastRune)
+					return n, d.err
+				}
+				n += 2
+			}
+
+			d.expectEOF = true
+		}
+	}
 	return n, d.err
 }
 

@@ -502,6 +502,7 @@ type decoder struct {
 	buf       [4096]byte // source bytes waiting to be decoded
 	pos       int        // current position in buf
 	nbuf      int        // number of bytes in buf
+	expectEOF bool       // whether a base64dq stream expects to end soon
 
 	// buffer for output
 	dbuf  [4]byte // Decode quantum using the base64 alphabet
@@ -525,6 +526,8 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 
 	// Refill buffer.
 	if d.pos == d.nbuf {
+		d.pos = 0
+		d.nbuf = 0
 		nn := len(p) / 3 * 4 * d.enc.maxSize
 		if nn < 4*d.enc.maxSize {
 			nn = 4 * d.enc.maxSize
@@ -532,11 +535,13 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 		if nn > len(d.buf) {
 			nn = len(d.buf)
 		}
-		nn, d.readErr = d.r.Read(d.buf[:nn])
-		d.pos = 0
-		d.nbuf = nn
+		for d.nbuf < 4*d.enc.maxSize && d.readErr == nil {
+			nn, d.readErr = d.r.Read(d.buf[d.nbuf:nn])
+			d.nbuf += nn
+		}
 	}
 
+LOOP:
 	for ; d.pos < d.nbuf; d.pos++ {
 		b := d.buf[d.pos]
 		d.state = d.state.children[b]
@@ -578,16 +583,20 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 					d.err = CorruptInputError(d.lastRune)
 					return n, d.err
 				}
-				p = p[2:]
 				n += 2
+				d.pos++
+				d.expectEOF = true
+				break LOOP
 			case 2:
 				p[0] = byte(val >> 16)
 				if d.enc.strict && (val&0xFFFF) != 0 {
 					d.err = CorruptInputError(d.lastRune)
 					return n, d.err
 				}
-				p = p[1:]
 				n += 1
+				d.pos++
+				d.expectEOF = true
+				break LOOP
 			case 3, 4:
 				d.err = CorruptInputError(d.lastRune)
 				return n, d.err
@@ -596,7 +605,7 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 		}
 	}
 	d.err = d.readErr
-	return
+	return n, d.err
 }
 
 // NewDecoder constructs a new base64 stream decoder.

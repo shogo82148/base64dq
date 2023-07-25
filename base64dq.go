@@ -11,6 +11,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -48,7 +49,7 @@ type node struct {
 	children []*node
 }
 
-func buildTrie(entries [64]string, padding rune) *node {
+func buildDFA(entries [64]string, padding rune) *node {
 	root := &node{
 		v:        rootNode,
 		children: make([]*node, 256),
@@ -104,9 +105,12 @@ func buildTrie(entries [64]string, padding rune) *node {
 }
 
 type Encoding struct {
+	once sync.Once // guards root
+	root *node
+
 	encode  [64]string
 	decode  decodeMap
-	maxSize int
+	maxSize int // maximum number of bytes per rune
 	padChar rune
 	strict  bool
 }
@@ -117,9 +121,14 @@ type Encoding struct {
 //
 // Note that the input is still malleable, as new line characters
 // (CR and LF) are still ignored.
-func (enc Encoding) Strict() *Encoding {
-	enc.strict = true
-	return &enc
+func (enc *Encoding) Strict() *Encoding {
+	return &Encoding{
+		encode:  enc.encode,
+		decode:  enc.decode,
+		maxSize: enc.maxSize,
+		padChar: enc.padChar,
+		strict:  true,
+	}
 }
 
 const encodeStd = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわがぎぐげござじずぜぞだぢづでどばびぶべぼ"
@@ -167,21 +176,43 @@ func NewEncoding(encoder string) *Encoding {
 	return e
 }
 
+func (enc *Encoding) buildOnce() {
+	enc.once.Do(enc.build)
+}
+
+func (enc *Encoding) build() {
+	enc.root = buildDFA(enc.encode, enc.padChar)
+}
+
 // WithPadding creates a new encoding identical to enc except
 // with a specified padding character, or NoPadding to disable padding.
 // The padding character must not be '\r' or '\n', must not
 // be contained in the encoding's alphabet.
-func (enc Encoding) WithPadding(padding rune) *Encoding {
+func (enc *Encoding) WithPadding(padding rune) *Encoding {
 	if padding == '\r' || padding == '\n' {
 		panic("invalid padding")
 	}
 
-	if enc.decode.search(padding) != 0xff {
-		panic("padding contained in alphabet")
+	for _, s := range enc.encode {
+		r, _ := utf8.DecodeRuneInString(s)
+		if r == padding {
+			panic("padding contained in alphabet")
+		}
 	}
 
-	enc.padChar = padding
-	return &enc
+	maxSize := enc.maxSize
+	size := utf8.RuneLen(padding)
+	if size > maxSize {
+		maxSize = size
+	}
+
+	return &Encoding{
+		encode:  enc.encode,
+		decode:  enc.decode,
+		maxSize: maxSize,
+		padChar: padding,
+		strict:  enc.strict,
+	}
 }
 
 // StdEncoding is a base64 encoding used in Revival Password.
@@ -339,12 +370,11 @@ func (e CorruptInputError) Error() string {
 }
 
 func (enc *Encoding) Decode(dst, src []byte) (int, error) {
-	root := buildTrie(enc.encode, enc.padChar)
-
 	// Decode quantum using the base64 alphabet
 	var dbuf [4]byte
 
-	n := root
+	enc.buildOnce()
+	n := enc.root
 	padCount := 0
 	lastBlock := 0 // position of last block boundary
 	lastRune := 0  // position of last rune that contributed to the output

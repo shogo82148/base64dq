@@ -587,39 +587,46 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 			d.lastBlock = d.n + 1
 			// Convert 4x 6bit source bytes into 3 bytes
 			val := uint(d.dbuf[0])<<18 | uint(d.dbuf[1])<<12 | uint(d.dbuf[2])<<6 | uint(d.dbuf[3])
-			switch d.padCount {
-			case 0:
+			if d.padCount == 0 && len(p) >= 3 {
 				p[0] = byte(val >> 16)
 				p[1] = byte(val >> 8)
 				p[2] = byte(val >> 0)
 				p = p[3:]
 				n += 3
-			case 1:
-				p[0] = byte(val >> 16)
-				p[1] = byte(val >> 8)
-				if d.enc.strict && (val&0xFF) != 0 {
+			} else {
+				switch d.padCount {
+				case 0:
+					d.out[0] = byte(val >> 16)
+					d.out[1] = byte(val >> 8)
+					d.out[2] = byte(val >> 0)
+					d.nout = 3
+				case 1:
+					d.out[0] = byte(val >> 16)
+					d.out[1] = byte(val >> 8)
+					if d.enc.strict && (val&0xFF) != 0 {
+						d.err = CorruptInputError(d.lastRune)
+						return n, d.err
+					}
+					d.nout = 2
+					d.pos++
+					d.n++
+					d.expectEOF = true
+					return n, nil
+				case 2:
+					d.out[0] = byte(val >> 16)
+					if d.enc.strict && (val&0xFFFF) != 0 {
+						d.err = CorruptInputError(d.lastRune)
+						return n, d.err
+					}
+					d.nout = 1
+					d.pos++
+					d.n++
+					d.expectEOF = true
+					return n, nil
+				case 3, 4:
 					d.err = CorruptInputError(d.lastRune)
 					return n, d.err
 				}
-				n += 2
-				d.pos++
-				d.n++
-				d.expectEOF = true
-				return n, nil
-			case 2:
-				p[0] = byte(val >> 16)
-				if d.enc.strict && (val&0xFFFF) != 0 {
-					d.err = CorruptInputError(d.lastRune)
-					return n, d.err
-				}
-				n += 1
-				d.pos++
-				d.n++
-				d.expectEOF = true
-				return n, nil
-			case 3, 4:
-				d.err = CorruptInputError(d.lastRune)
-				return n, d.err
 			}
 		}
 		if d.state.v < 64 {

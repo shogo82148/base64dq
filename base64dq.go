@@ -36,6 +36,73 @@ func (dm *decodeMap) sort() {
 	sort.Sort(dm)
 }
 
+const (
+	rootNode    = -1
+	midNode     = -2
+	paddingNode = 64
+)
+
+// node is a node in a DFA (Deterministic Finite State Machine).
+type node struct {
+	v        int
+	children []*node
+}
+
+func buildTrie(entries [64]string, padding rune) *node {
+	root := &node{
+		v:        rootNode,
+		children: make([]*node, 256),
+	}
+	for i, entry := range entries {
+		n := root
+		for _, b := range []byte(entry[:len(entry)-1]) {
+			if n.children[b] == nil {
+				n.children[b] = &node{
+					v:        midNode,
+					children: make([]*node, 256),
+				}
+			}
+			n = n.children[b]
+		}
+		n.children[entry[len(entry)-1]] = &node{
+			v:        i,
+			children: root.children,
+		}
+	}
+
+	if padding != NoPadding {
+		pad := &node{
+			v:        paddingNode,
+			children: make([]*node, 256),
+		}
+		var buf [4]byte
+		l := utf8.EncodeRune(buf[:], padding)
+		n, m := root, pad
+		for _, b := range buf[:l-1] {
+			if n.children[b] == nil {
+				n.children[b] = &node{
+					v:        -1,
+					children: make([]*node, 256),
+				}
+			}
+			if m.children[b] == nil {
+				m.children[b] = &node{
+					v:        -1,
+					children: make([]*node, 256),
+				}
+			}
+			n = n.children[b]
+			m = m.children[b]
+		}
+		n.children[buf[l-1]] = pad
+		m.children[buf[l-1]] = pad
+	}
+
+	root.children['\n'] = root
+	root.children['\r'] = root
+	return root
+}
+
 type Encoding struct {
 	encode  [64]string
 	decode  decodeMap
@@ -272,113 +339,123 @@ func (e CorruptInputError) Error() string {
 }
 
 func (enc *Encoding) Decode(dst, src []byte) (int, error) {
-	var err error
-	n := 0
-	si, sj, sk := 0, 0, 0
-	dlen := 4
+	root := buildTrie(enc.encode, enc.padChar)
 
-	for si < len(src) {
-		// Decode quantum using the base64 alphabet
-		var dbuf [4]byte
+	// Decode quantum using the base64 alphabet
+	var dbuf [4]byte
 
-		for j := 0; j < len(dbuf); j++ {
-			if len(src) == si {
-				switch {
-				case j == 0:
-					return n, nil
-				case j == 1:
-					return n, CorruptInputError(sj)
-				case enc.padChar != NoPadding:
-					return n, CorruptInputError(sk)
-				}
-				dlen = j
-				break
-			}
-			r, size := utf8.DecodeRune(src[si:])
-			if r == utf8.RuneError {
-				return n, CorruptInputError(si)
-			}
-			si, sj, sk = si+size, si, sj
+	n := root
+	padCount := 0
+	lastBlock := 0 // position of last block boundary
+	lastRune := 0  // position of last rune that contributed to the output
+	i := 0
+	j := 0
+	k := 0
 
-			out := enc.decode.search(r)
-			if out != 0xFF {
-				dbuf[j] = out
-				continue
-			}
+LOOP:
+	for ; i < len(src); i++ {
+		b := src[i]
+		n = n.children[b]
+		if n == nil {
+			return 0, CorruptInputError(lastRune)
+		}
 
-			if r == '\n' || r == '\r' {
-				j--
-				continue
-			}
-
-			if r != enc.padChar {
-				return n, CorruptInputError(sj)
-			}
-
-			// We've reached the end and there's padding
-			switch j {
+		v := n.v
+		if v < 0 {
+			continue
+		}
+		if v == 64 {
+			switch j % 4 {
 			case 0, 1:
 				// incorrect padding
-				return n, CorruptInputError(sj)
-			case 2:
-				// "・・" is expected, the first "・" is already consumed.
-				// skip over newlines
-				for si < len(src) && (src[si] == '\n' || src[si] == '\r') {
-					si, sj, sk = si+1, si, sj
-				}
-				if si == len(src) {
-					// not enough padding
-					return n, CorruptInputError(len(src))
-				}
-				pad, size := utf8.DecodeRune(src[si:])
-				if pad != enc.padChar {
-					// incorrect padding
-					return n, CorruptInputError(sj)
-				}
-				si += size
+				return 0, CorruptInputError(lastRune)
 			}
+			padCount++
+			v = 0
+		}
 
-			// skip over newlines
-			for si < len(src) && (src[si] == '\n' || src[si] == '\r') {
-				si, sj, sk = si+1, si, sj
+		dbuf[j%4] = byte(v)
+		j++
+		if j%4 == 0 {
+			lastBlock = i + 1
+			// Convert 4x 6bit source bytes into 3 bytes
+			val := uint(dbuf[0])<<18 | uint(dbuf[1])<<12 | uint(dbuf[2])<<6 | uint(dbuf[3])
+			switch padCount {
+			case 0:
+				dst[k+0] = byte(val >> 16)
+				dst[k+1] = byte(val >> 8)
+				dst[k+2] = byte(val >> 0)
+				k += 3
+			case 1:
+				dst[k+0] = byte(val >> 16)
+				dst[k+1] = byte(val >> 8)
+				if enc.strict && (val&0xFF) != 0 {
+					return 0, CorruptInputError(lastRune)
+				}
+				k += 2
+				i += 1
+				break LOOP
+			case 2:
+				dst[k+0] = byte(val >> 16)
+				if enc.strict && (val&0xFFFF) != 0 {
+					return 0, CorruptInputError(lastRune)
+				}
+				k += 1
+				i += 1
+				break LOOP
+			case 3, 4:
+				return 0, CorruptInputError(lastRune)
 			}
-			if si < len(src) {
-				// trailing garbage
-				err = CorruptInputError(si)
+		}
+		if n.v < 64 {
+			lastRune = i + 1
+		}
+	}
+	if n.v < 0 && n.v != rootNode {
+		// invalid rune
+		return 0, CorruptInputError(i)
+	}
+
+	// handle remaining bytes and padding
+	if j%4 != 0 {
+		if enc.padChar != NoPadding {
+			if padCount == 0 {
+				return 0, CorruptInputError(lastBlock)
 			}
-			dlen = j
-			break
+			return 0, CorruptInputError(i)
 		}
 
 		// Convert 4x 6bit source bytes into 3 bytes
-		val := uint(dbuf[0])<<18 | uint(dbuf[1])<<12 | uint(dbuf[2])<<6 | uint(dbuf[3])
-		dbuf[2], dbuf[1], dbuf[0] = byte(val>>0), byte(val>>8), byte(val>>16)
-
-		switch dlen {
-		case 4:
-			dst[n+2] = dbuf[2]
-			dbuf[2] = 0
-			fallthrough
-		case 3:
-			dst[n+1] = dbuf[1]
-			if enc.strict && dbuf[2] != 0 {
-				return n, CorruptInputError(sj)
-			}
-			dbuf[1] = 0
-			fallthrough
-		case 2:
-			dst[n+0] = dbuf[0]
-			if enc.strict && (dbuf[1] != 0 || dbuf[2] != 0) {
-				return n, CorruptInputError(sk)
-			}
+		for i := j % 4; i < 4; i++ {
+			dbuf[i] = 0
 		}
-		n += dlen - 1
-		if err != nil {
-			return n, err
+		val := uint(dbuf[0])<<18 | uint(dbuf[1])<<12 | uint(dbuf[2])<<6 | uint(dbuf[3])
+		switch j % 4 {
+		case 0, 1:
+			return 0, CorruptInputError(i)
+		case 2:
+			dst[k+0] = byte(val >> 16)
+			if enc.strict && (val&0xFFFF) != 0 {
+				return 0, CorruptInputError(lastRune)
+			}
+			k += 1
+		case 3:
+			dst[k+0] = byte(val >> 16)
+			dst[k+1] = byte(val >> 8)
+			if enc.strict && (val&0xFF) != 0 {
+				return 0, CorruptInputError(lastRune)
+			}
+			k += 2
+		}
+	}
+	for ; i < len(src); i++ {
+		if src[i] != '\n' && src[i] != '\r' {
+			// trailing garbage
+			return 0, CorruptInputError(i)
 		}
 	}
 
-	return n, nil
+	return k, nil
 }
 
 type decoder struct {

@@ -534,7 +534,7 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 		return 0, d.err
 	}
 
-	for ; d.pos < d.nbuf; d.pos, d.n = d.pos+1, d.n+1 {
+	for ; d.pos < d.nbuf && len(p) > 0; d.pos, d.n = d.pos+1, d.n+1 {
 		b := d.buf[d.pos]
 		d.state = d.state.children[b]
 		if d.state == nil {
@@ -599,6 +599,7 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 					return n, d.err
 				}
 				nn := copy(p, d.out[:d.nout])
+				p = p[nn:]
 				d.nout -= nn
 				copy(d.out[:], d.out[nn:])
 				n += nn

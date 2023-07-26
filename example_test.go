@@ -3,9 +3,10 @@
 package base64dq_test
 
 import (
-	"base64dq"
 	"fmt"
 	"os"
+
+	"github.com/shogo82148/base64dq"
 )
 
 func Example() {

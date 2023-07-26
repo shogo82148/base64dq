@@ -1,11 +1,12 @@
 package main
 
 import (
-	"base64dq"
 	"flag"
 	"io"
 	"log"
 	"os"
+
+	"github.com/shogo82148/base64dq"
 )
 
 func main() {

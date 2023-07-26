@@ -479,7 +479,7 @@ func BenchmarkEncodeToString(b *testing.B) {
 	}
 }
 
-func BenchmarkEncodeToString_Std(b *testing.B) {
+func BenchmarkEncodeToString_Base64(b *testing.B) {
 	enc := NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding('=')
 	data := make([]byte, 8192)
 	b.ResetTimer()
@@ -514,6 +514,41 @@ func BenchmarkDecodeString(b *testing.B) {
 	}
 }
 
+func BenchmarkDecodeString_Base64(b *testing.B) {
+	enc := NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding('=')
+	sizes := []int{2, 4, 8, 64, 8192}
+	benchFunc := func(b *testing.B, benchSize int) {
+		data := enc.EncodeToString(make([]byte, benchSize))
+		b.SetBytes(int64(len(data)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			enc.DecodeString(data)
+		}
+	}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("%d", size), func(b *testing.B) {
+			benchFunc(b, size)
+		})
+	}
+}
+
+func BenchmarkDecodeString_StdBase64(b *testing.B) {
+	sizes := []int{2, 4, 8, 64, 8192}
+	benchFunc := func(b *testing.B, benchSize int) {
+		data := base64.StdEncoding.EncodeToString(make([]byte, benchSize))
+		b.SetBytes(int64(len(data)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			base64.StdEncoding.DecodeString(data)
+		}
+	}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("%d", size), func(b *testing.B) {
+			benchFunc(b, size)
+		})
+	}
+}
+
 func BenchmarkDecoder(b *testing.B) {
 	sizes := []int{2, 4, 8, 64, 8192}
 	benchFunc := func(b *testing.B, benchSize int) {
@@ -522,6 +557,43 @@ func BenchmarkDecoder(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			dec := NewDecoder(StdEncoding, strings.NewReader(data))
+			io.Copy(io.Discard, dec)
+		}
+	}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("%d", size), func(b *testing.B) {
+			benchFunc(b, size)
+		})
+	}
+}
+
+func BenchmarkDecoder_Base64(b *testing.B) {
+	enc := NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding('=')
+	sizes := []int{2, 4, 8, 64, 8192}
+	benchFunc := func(b *testing.B, benchSize int) {
+		data := enc.EncodeToString(make([]byte, benchSize))
+		b.SetBytes(int64(len(data)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			dec := NewDecoder(enc, strings.NewReader(data))
+			io.Copy(io.Discard, dec)
+		}
+	}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("%d", size), func(b *testing.B) {
+			benchFunc(b, size)
+		})
+	}
+}
+
+func BenchmarkDecoder_StdBase64(b *testing.B) {
+	sizes := []int{2, 4, 8, 64, 8192}
+	benchFunc := func(b *testing.B, benchSize int) {
+		data := base64.StdEncoding.EncodeToString(make([]byte, benchSize))
+		b.SetBytes(int64(len(data)))
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			dec := base64.NewDecoder(base64.StdEncoding, strings.NewReader(data))
 			io.Copy(io.Discard, dec)
 		}
 	}

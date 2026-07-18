@@ -16,13 +16,6 @@ jobs:
           - "1.21"
           - "1.20"
           - "1.19"
-        goexperiment: [""]
-        include:
-          # test with GOEXPERIMENT=loopvar
-          # https://github.com/golang/go/wiki/LoopvarExperiment
-          - os: ubuntu-latest
-            go: "1.21"
-            goexperiment: "loopvar"
 
     steps:
       - name: Set up Go ${{ matrix.go }}
@@ -35,8 +28,6 @@ jobs:
 
       - name: Test
         run: go test -v -coverprofile=profile.cov ./...
-        env:
-          GOEXPERIMENT: ${{ matrix.goexperiment }}
 
       - name: Send coverage
         uses: shogo82148/actions-goveralls@v1

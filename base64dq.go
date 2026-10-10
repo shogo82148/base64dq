@@ -207,6 +207,10 @@ func newFastDecoder(entries [64]string) *fastDecoder {
 			f.decode1[i] = 0xFF
 		}
 		for i, entry := range entries {
+			if entry[0] == '\n' || entry[0] == '\r' {
+				// new lines are ignored by the DFA, leave them to the slow path.
+				continue
+			}
 			f.decode1[entry[0]] = uint8(i)
 		}
 		return f
@@ -347,7 +351,8 @@ func (enc *Encoding) Encode(dst, src []byte) int {
 	n := (len(src) / 3) * 3
 
 	// Fast path: write each rune as a 4-byte store while dst has enough room.
-	for si < n && len(dst)-di >= 16 {
+	// A store may write up to 3 bytes past the rune, but they are overwritten by the next rune.
+	for si+3 < n && len(dst)-di >= 16 {
 		val := uint(src[si+0])<<16 | uint(src[si+1])<<8 | uint(src[si+2])
 		c0, c1, c2, c3 := val>>18&0x3F, val>>12&0x3F, val>>6&0x3F, val&0x3F
 		binary.LittleEndian.PutUint32(dst[di:], enc.encodeBuf[c0])
@@ -358,6 +363,24 @@ func (enc *Encoding) Encode(dst, src []byte) int {
 		di += int(enc.encodeLen[c2])
 		binary.LittleEndian.PutUint32(dst[di:], enc.encodeBuf[c3])
 		di += int(enc.encodeLen[c3])
+		si += 3
+	}
+	if si+3 == n {
+		// The last quantum: encode it into a temporary buffer,
+		// and copy exactly the output so that nothing is written past it.
+		var buf [16]byte
+		val := uint(src[si+0])<<16 | uint(src[si+1])<<8 | uint(src[si+2])
+		c0, c1, c2, c3 := val>>18&0x3F, val>>12&0x3F, val>>6&0x3F, val&0x3F
+		m := 0
+		binary.LittleEndian.PutUint32(buf[m:], enc.encodeBuf[c0])
+		m += int(enc.encodeLen[c0])
+		binary.LittleEndian.PutUint32(buf[m:], enc.encodeBuf[c1])
+		m += int(enc.encodeLen[c1])
+		binary.LittleEndian.PutUint32(buf[m:], enc.encodeBuf[c2])
+		m += int(enc.encodeLen[c2])
+		binary.LittleEndian.PutUint32(buf[m:], enc.encodeBuf[c3])
+		m += int(enc.encodeLen[c3])
+		di += copy(dst[di:], buf[:m])
 		si += 3
 	}
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 type testpair struct {
@@ -447,6 +448,50 @@ func TestDecoderCorrupt(t *testing.T) {
 			}
 		default:
 			t.Error("Decoder failed to detect corruption in", tc)
+		}
+	}
+}
+
+func TestDecoderReaders(t *testing.T) {
+	encodings := map[string]*Encoding{
+		"Std":    StdEncoding,
+		"RawStd": RawStdEncoding,
+		"ASCII":  NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding('='),
+		"Raw":    NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding(NoPadding),
+	}
+	readers := map[string]func(io.Reader) io.Reader{
+		"Plain":   func(r io.Reader) io.Reader { return r },
+		"OneByte": iotest.OneByteReader,
+		"Half":    iotest.HalfReader,
+		"DataErr": iotest.DataErrReader,
+	}
+	for name, enc := range encodings {
+		for rname, wrap := range readers {
+			for _, p := range pairs {
+				encoded := enc.EncodeToString([]byte(p.decoded))
+				// insert a new line in the middle of the input
+				runes := []rune(encoded)
+				lines := string(runes[:len(runes)/2]) + "\n" + string(runes[len(runes)/2:])
+				for _, input := range []string{encoded, lines} {
+					for size := 1; size <= 12; size++ {
+						decoder := NewDecoder(enc, wrap(strings.NewReader(input)))
+						var got []byte
+						buf := make([]byte, size)
+						var err error
+						for err == nil {
+							var n int
+							n, err = decoder.Read(buf)
+							got = append(got, buf[:n]...)
+						}
+						if err != io.EOF {
+							t.Errorf("%s/%s/%d: Read from %q: unexpected error %v", name, rname, size, input, err)
+						}
+						if string(got) != p.decoded {
+							t.Errorf("%s/%s/%d: Decoding of %q = %q, want %q", name, rname, size, input, got, p.decoded)
+						}
+					}
+				}
+			}
 		}
 	}
 }

@@ -275,7 +275,7 @@ func TestEncoderBuffering(t *testing.T) {
 	}
 }
 
-const emoji = "😀😃😄😁😆😅😂🙂🙃😉😊😇😍😘😗☺️😚😙😋😛😜😝🤑🤗🤔🤐😐😑😶😏😒🙄😬😌😔😪😴😷🤒🤕😵😎🤓😕😟🙁☹️😮😯😲😳😦😧😨😰😥😢😭😱😖😣😞"
+const emoji = "😀😃😄😁😆😅😂🙂🙃😉😊😇😍😘😗☺😚😙😋😛😜😝🤑🤗🤔🤐😐😑😶😏😒🙄😬😌😔😪😴😷🤒🤕😵😎🤓😕😟🙁☹😮😯😲😳😦😧😨😰😥😢😭😱😖😣😞😠😡"
 
 var emojiEncode = NewEncoding(emoji)
 
@@ -687,5 +687,34 @@ func BenchmarkDecoder_StdBase64(b *testing.B) {
 		b.Run(fmt.Sprintf("%d", size), func(b *testing.B) {
 			benchFunc(b, size)
 		})
+	}
+}
+
+func TestNewEncoding_DuplicateSymbols(t *testing.T) {
+	// replace the last rune "ぼ" with "あ", which is already in the alphabet
+	alphabet := strings.TrimSuffix(encodeStd, "ぼ") + "あ"
+	defer func() {
+		if recover() == nil {
+			t.Error("NewEncoding did not panic on duplicate symbols")
+		}
+	}()
+	NewEncoding(alphabet)
+}
+
+func TestNewEncoding_InvalidLength(t *testing.T) {
+	tests := []string{
+		"",
+		strings.TrimSuffix(encodeStd, "ぼ"), // 63 runes
+		encodeStd + "ぱ",                    // 65 runes
+	}
+	for _, alphabet := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("NewEncoding(%q) did not panic", alphabet)
+				}
+			}()
+			NewEncoding(alphabet)
+		}()
 	}
 }

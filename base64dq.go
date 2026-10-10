@@ -7,9 +7,11 @@
 package base64dq
 
 import (
+	"encoding/binary"
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"unicode/utf8"
 )
@@ -91,13 +93,16 @@ func buildDFA(entries [64]string, padding rune) *node {
 }
 
 type Encoding struct {
-	once sync.Once // guards root
+	once sync.Once // guards root and fast
 	root *node
+	fast *fastDecoder
 
-	encode  [64]string
-	maxSize int // maximum number of bytes per rune
-	padChar rune
-	strict  bool
+	encode    [64]string
+	encodeBuf [64]uint32 // encode[i] packed in little endian
+	encodeLen [64]uint8  // len(encode[i])
+	maxSize   int        // maximum number of bytes per rune
+	padChar   rune
+	strict    bool
 }
 
 // Strict creates a new encoding identical to enc except with
@@ -108,10 +113,12 @@ type Encoding struct {
 // (CR and LF) are still ignored.
 func (enc *Encoding) Strict() *Encoding {
 	return &Encoding{
-		encode:  enc.encode,
-		maxSize: enc.maxSize,
-		padChar: enc.padChar,
-		strict:  true,
+		encode:    enc.encode,
+		encodeBuf: enc.encodeBuf,
+		encodeLen: enc.encodeLen,
+		maxSize:   enc.maxSize,
+		padChar:   enc.padChar,
+		strict:    true,
 	}
 }
 
@@ -146,6 +153,10 @@ func NewEncoding(encoder string) *Encoding {
 
 	for i := 0; i < 64; i++ {
 		e.encode[i] = encoder[pos[i]:pos[i+1]]
+		var buf [4]byte
+		copy(buf[:], e.encode[i])
+		e.encodeBuf[i] = binary.LittleEndian.Uint32(buf[:])
+		e.encodeLen[i] = uint8(len(e.encode[i]))
 		if size := pos[i+1] - pos[i]; size > e.maxSize {
 			e.maxSize = size
 		}
@@ -163,6 +174,128 @@ func (enc *Encoding) buildOnce() {
 
 func (enc *Encoding) build() {
 	enc.root = buildDFA(enc.encode, enc.padChar)
+	enc.fast = newFastDecoder(enc.encode)
+}
+
+// fastDecoder decodes complete quanta that contain no new lines and no padding.
+// It is available only if all runes in the alphabet have the same length of 1 or 3 bytes.
+type fastDecoder struct {
+	size int // the length of each rune in bytes
+
+	// for size == 1: the value of the rune, 0xFF if invalid.
+	decode1 [256]uint8
+
+	// for size == 3: the rune b0 b1 b2 is decoded as
+	// pages[index[(b0&0x0F)<<6|(b1&0x3F)]<<6|(b2&0x3F)].
+	// page 0 is filled with 0xFF (invalid).
+	index [1024]uint8
+	pages []uint8
+}
+
+func newFastDecoder(entries [64]string) *fastDecoder {
+	size := len(entries[0])
+	for _, entry := range entries {
+		if len(entry) != size {
+			return nil
+		}
+	}
+
+	switch size {
+	case 1:
+		f := &fastDecoder{size: 1}
+		for i := range f.decode1 {
+			f.decode1[i] = 0xFF
+		}
+		for i, entry := range entries {
+			if entry[0] == '\n' || entry[0] == '\r' {
+				// new lines are ignored by the DFA, leave them to the slow path.
+				continue
+			}
+			f.decode1[entry[0]] = uint8(i)
+		}
+		return f
+	case 3:
+		f := &fastDecoder{size: 3}
+		f.pages = make([]uint8, 64, 2*64)
+		for i := range f.pages {
+			f.pages[i] = 0xFF
+		}
+		for i, entry := range entries {
+			// all runes are 3-byte UTF-8 sequences, so b0 is 1110xxxx and b1, b2 are 10xxxxxx.
+			key := uint(entry[0]&0x0F)<<6 | uint(entry[1]&0x3F)
+			if f.index[key] == 0 {
+				f.index[key] = uint8(len(f.pages) >> 6)
+				f.pages = append(f.pages, f.pages[:64]...)
+			}
+			f.pages[uint(f.index[key])<<6|uint(entry[2]&0x3F)] = uint8(i)
+		}
+		return f
+	}
+	return nil
+}
+
+// decode decodes as many complete quanta from src as possible.
+// It stops at the first quantum that contains anything other than the alphabet
+// (e.g. new lines, padding, and invalid bytes), and leaves it to the slow path.
+// The last quantum of src is always left to the slow path, because it is likely to contain padding.
+// It returns the number of bytes consumed from src and written to dst.
+func (f *fastDecoder) decode(dst, src []byte) (si, di int) {
+	if f == nil {
+		return 0, 0
+	}
+
+	switch f.size {
+	case 1:
+		for len(src)-si > 4 && len(dst)-di >= 3 {
+			s := src[si : si+4]
+			v0 := uint(f.decode1[s[0]])
+			v1 := uint(f.decode1[s[1]])
+			v2 := uint(f.decode1[s[2]])
+			v3 := uint(f.decode1[s[3]])
+			if (v0|v1|v2|v3)&0xC0 != 0 {
+				break
+			}
+			val := v0<<18 | v1<<12 | v2<<6 | v3
+			d := dst[di : di+3]
+			d[0] = byte(val >> 16)
+			d[1] = byte(val >> 8)
+			d[2] = byte(val)
+			si += 4
+			di += 3
+		}
+	case 3:
+		pages := f.pages
+		for len(src)-si > 12 && len(dst)-di >= 3 {
+			s := src[si : si+12]
+
+			// check that all runes are 3-byte UTF-8 sequences.
+			var bad byte
+			for i := 0; i < 12; i += 3 {
+				bad |= (s[i] & 0xF0) ^ 0xE0
+				bad |= (s[i+1] & 0xC0) ^ 0x80
+				bad |= (s[i+2] & 0xC0) ^ 0x80
+			}
+			if bad != 0 {
+				break
+			}
+
+			v0 := uint(pages[uint(f.index[uint(s[0]&0x0F)<<6|uint(s[1]&0x3F)])<<6|uint(s[2]&0x3F)])
+			v1 := uint(pages[uint(f.index[uint(s[3]&0x0F)<<6|uint(s[4]&0x3F)])<<6|uint(s[5]&0x3F)])
+			v2 := uint(pages[uint(f.index[uint(s[6]&0x0F)<<6|uint(s[7]&0x3F)])<<6|uint(s[8]&0x3F)])
+			v3 := uint(pages[uint(f.index[uint(s[9]&0x0F)<<6|uint(s[10]&0x3F)])<<6|uint(s[11]&0x3F)])
+			if (v0|v1|v2|v3)&0xC0 != 0 {
+				break
+			}
+			val := v0<<18 | v1<<12 | v2<<6 | v3
+			d := dst[di : di+3]
+			d[0] = byte(val >> 16)
+			d[1] = byte(val >> 8)
+			d[2] = byte(val)
+			si += 12
+			di += 3
+		}
+	}
+	return si, di
 }
 
 // WithPadding creates a new encoding identical to enc except
@@ -188,10 +321,12 @@ func (enc *Encoding) WithPadding(padding rune) *Encoding {
 	}
 
 	return &Encoding{
-		encode:  enc.encode,
-		maxSize: maxSize,
-		padChar: padding,
-		strict:  enc.strict,
+		encode:    enc.encode,
+		encodeBuf: enc.encodeBuf,
+		encodeLen: enc.encodeLen,
+		maxSize:   maxSize,
+		padChar:   padding,
+		strict:    enc.strict,
 	}
 }
 
@@ -214,6 +349,41 @@ func (enc *Encoding) Encode(dst, src []byte) int {
 
 	di, si := 0, 0
 	n := (len(src) / 3) * 3
+
+	// Fast path: write each rune as a 4-byte store while dst has enough room.
+	// A store may write up to 3 bytes past the rune, but they are overwritten by the next rune.
+	for si+3 < n && len(dst)-di >= 16 {
+		val := uint(src[si+0])<<16 | uint(src[si+1])<<8 | uint(src[si+2])
+		c0, c1, c2, c3 := val>>18&0x3F, val>>12&0x3F, val>>6&0x3F, val&0x3F
+		binary.LittleEndian.PutUint32(dst[di:], enc.encodeBuf[c0])
+		di += int(enc.encodeLen[c0])
+		binary.LittleEndian.PutUint32(dst[di:], enc.encodeBuf[c1])
+		di += int(enc.encodeLen[c1])
+		binary.LittleEndian.PutUint32(dst[di:], enc.encodeBuf[c2])
+		di += int(enc.encodeLen[c2])
+		binary.LittleEndian.PutUint32(dst[di:], enc.encodeBuf[c3])
+		di += int(enc.encodeLen[c3])
+		si += 3
+	}
+	if si+3 == n {
+		// The last quantum: encode it into a temporary buffer,
+		// and copy exactly the output so that nothing is written past it.
+		var buf [16]byte
+		val := uint(src[si+0])<<16 | uint(src[si+1])<<8 | uint(src[si+2])
+		c0, c1, c2, c3 := val>>18&0x3F, val>>12&0x3F, val>>6&0x3F, val&0x3F
+		m := 0
+		binary.LittleEndian.PutUint32(buf[m:], enc.encodeBuf[c0])
+		m += int(enc.encodeLen[c0])
+		binary.LittleEndian.PutUint32(buf[m:], enc.encodeBuf[c1])
+		m += int(enc.encodeLen[c1])
+		binary.LittleEndian.PutUint32(buf[m:], enc.encodeBuf[c2])
+		m += int(enc.encodeLen[c2])
+		binary.LittleEndian.PutUint32(buf[m:], enc.encodeBuf[c3])
+		m += int(enc.encodeLen[c3])
+		di += copy(dst[di:], buf[:m])
+		si += 3
+	}
+
 	for si < n {
 		val := uint(src[si+0])<<16 | uint(src[si+1])<<8 | uint(src[si+2])
 		di += copy(dst[di:], enc.encode[val>>18&0x3F])
@@ -252,9 +422,21 @@ func (enc *Encoding) Encode(dst, src []byte) int {
 }
 
 func (enc *Encoding) EncodeToString(src []byte) string {
-	buf := make([]byte, enc.EncodedLen(len(src)))
-	n := enc.Encode(buf, src)
-	return string(buf[:n])
+	var sb strings.Builder
+	sb.Grow(enc.EncodedLen(len(src)))
+
+	// Encode src in chunks into a small buffer on the stack,
+	// and append them to sb. sb.String() doesn't copy the result.
+	var buf [256]byte
+	chunk := len(buf) / enc.maxSize / 4 * 3
+	for len(src) > chunk {
+		n := enc.Encode(buf[:], src[:chunk])
+		sb.Write(buf[:n])
+		src = src[chunk:]
+	}
+	n := enc.Encode(buf[:], src)
+	sb.Write(buf[:n])
+	return sb.String()
 }
 
 // EncodedLen returns the length in bytes of the base64 encoding
@@ -358,9 +540,9 @@ func (enc *Encoding) Decode(dst, src []byte) (int, error) {
 	padCount := 0
 	lastBlock := 0 // position of last block boundary
 	lastRune := 0  // position of last rune that contributed to the output
-	i := 0
+	i, k := enc.fast.decode(dst, src)
 	j := 0
-	k := 0
+	lastBlock, lastRune = i, i
 
 LOOP:
 	for ; i < len(src); i++ {
@@ -396,6 +578,12 @@ LOOP:
 				dst[k+1] = byte(val >> 8)
 				dst[k+2] = byte(val >> 0)
 				k += 3
+
+				// back to the fast path
+				si, di := enc.fast.decode(dst[k:], src[i+1:])
+				i += si
+				k += di
+				lastBlock = i + 1
 			case 1:
 				dst[k+0] = byte(val >> 16)
 				dst[k+1] = byte(val >> 8)
@@ -517,8 +705,9 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 			nn = len(d.buf)
 		}
 		for d.nbuf < 4*d.enc.maxSize && d.readErr == nil {
-			nn, d.readErr = d.r.Read(d.buf[d.nbuf:nn])
-			d.nbuf += nn
+			var nr int
+			nr, d.readErr = d.r.Read(d.buf[d.nbuf:nn])
+			d.nbuf += nr
 		}
 	}
 
@@ -532,6 +721,19 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 		}
 		d.err = d.readErr
 		return 0, d.err
+	}
+
+	if d.ndbuf == 0 && d.padCount == 0 && (d.state == d.enc.root || d.state.v >= 0 && d.state.v < 64) {
+		// at the boundary of quanta; try the fast path
+		si, di := d.enc.fast.decode(p, d.buf[d.pos:d.nbuf])
+		if si > 0 {
+			d.pos += si
+			d.n += int64(si)
+			d.lastBlock = d.n
+			d.lastRune = d.n
+			p = p[di:]
+			n += di
+		}
 	}
 
 	for ; d.pos < d.nbuf && len(p) > 0; d.pos, d.n = d.pos+1, d.n+1 {
@@ -570,6 +772,14 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 				p[2] = byte(val >> 0)
 				p = p[3:]
 				n += 3
+
+				// back to the fast path
+				si, di := d.enc.fast.decode(p, d.buf[d.pos+1:d.nbuf])
+				d.pos += si
+				d.n += int64(si)
+				d.lastBlock = d.n + 1
+				p = p[di:]
+				n += di
 			} else {
 				switch d.padCount {
 				case 0:
@@ -614,6 +824,11 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 			d.lastRune = d.n + 1
 		}
 	}
+	if d.pos < d.nbuf {
+		// p is full, but there are still bytes to decode in the buffer.
+		// The error from r.Read will be reported after consuming them.
+		return n, nil
+	}
 	d.err = d.readErr
 	if errors.Is(d.err, io.EOF) {
 		if d.state.v < 0 && d.state.v != rootNode {
@@ -642,24 +857,34 @@ func (d *decoder) Read(p []byte) (n int, err error) {
 				d.err = CorruptInputError(d.n)
 				return n, d.err
 			case 2:
-				p[0] = byte(val >> 16)
+				d.out[0] = byte(val >> 16)
 				if d.enc.strict && (val&0xFFFF) != 0 {
 					d.err = CorruptInputError(d.lastRune)
 					return n, d.err
 				}
-				n += 1
+				d.nout = 1
 			case 3:
-				p[0] = byte(val >> 16)
-				p[1] = byte(val >> 8)
+				d.out[0] = byte(val >> 16)
+				d.out[1] = byte(val >> 8)
 				if d.enc.strict && (val&0xFF) != 0 {
 					d.err = CorruptInputError(d.lastRune)
 					return n, d.err
 				}
-				n += 2
+				d.nout = 2
 			}
+			d.ndbuf = 0
 
+			// p may not have enough room; keep the rest in d.out for the next Read.
+			nn := copy(p, d.out[:d.nout])
+			d.nout -= nn
+			copy(d.out[:], d.out[nn:])
+			n += nn
 			d.expectEOF = true
 		}
+	}
+	if d.nout > 0 {
+		// The error will be reported after the leftover is consumed.
+		return n, nil
 	}
 	return n, d.err
 }

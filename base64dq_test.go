@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 type testpair struct {
@@ -285,6 +286,31 @@ func TestEncode_Emoji(t *testing.T) {
 	}
 }
 
+func TestEncode_NoWritePastOutput(t *testing.T) {
+	encodings := []*Encoding{
+		StdEncoding,
+		RawStdEncoding,
+		NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding(NoPadding),
+		NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzあいうえおかきくけこ+/").WithPadding(NoPadding),
+	}
+	for _, enc := range encodings {
+		for size := 0; size <= 30; size++ {
+			src := make([]byte, size)
+			dst := make([]byte, enc.EncodedLen(size)+16)
+			for i := range dst {
+				dst[i] = 0xAA
+			}
+			n := enc.Encode(dst, src)
+			for i := n; i < len(dst); i++ {
+				if dst[i] != 0xAA {
+					t.Errorf("Encode(%d bytes) wrote dst[%d] past the output (n = %d)", size, i, n)
+					break
+				}
+			}
+		}
+	}
+}
+
 func TestEncodedLen(t *testing.T) {
 	for _, tt := range []struct {
 		enc  *Encoding
@@ -447,6 +473,66 @@ func TestDecoderCorrupt(t *testing.T) {
 			}
 		default:
 			t.Error("Decoder failed to detect corruption in", tc)
+		}
+	}
+}
+
+func TestDecoderReaders(t *testing.T) {
+	encodings := map[string]*Encoding{
+		"Std":    StdEncoding,
+		"RawStd": RawStdEncoding,
+		"ASCII":  NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding('='),
+		"Raw":    NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding(NoPadding),
+	}
+	readers := map[string]func(io.Reader) io.Reader{
+		"Plain":   func(r io.Reader) io.Reader { return r },
+		"OneByte": iotest.OneByteReader,
+		"Half":    iotest.HalfReader,
+		"DataErr": iotest.DataErrReader,
+	}
+	for name, enc := range encodings {
+		for rname, wrap := range readers {
+			for _, p := range pairs {
+				encoded := enc.EncodeToString([]byte(p.decoded))
+				// insert a new line in the middle of the input
+				runes := []rune(encoded)
+				lines := string(runes[:len(runes)/2]) + "\n" + string(runes[len(runes)/2:])
+				for _, input := range []string{encoded, lines} {
+					for size := 1; size <= 12; size++ {
+						decoder := NewDecoder(enc, wrap(strings.NewReader(input)))
+						var got []byte
+						buf := make([]byte, size)
+						var err error
+						for err == nil {
+							var n int
+							n, err = decoder.Read(buf)
+							got = append(got, buf[:n]...)
+						}
+						if err != io.EOF {
+							t.Errorf("%s/%s/%d: Read from %q: unexpected error %v", name, rname, size, input, err)
+						}
+						if string(got) != p.decoded {
+							t.Errorf("%s/%s/%d: Decoding of %q = %q, want %q", name, rname, size, input, got, p.decoded)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestDecode_NewLineInAlphabet(t *testing.T) {
+	// '\n' and '\r' in the alphabet are ignored as new lines.
+	enc := NewEncoding("\n\rCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/").WithPadding(NoPadding)
+	want := "\x08\x20\x82\x08\x20\x82" // "CCCCCCCC"
+	for _, input := range []string{"CCCCCCCC", "CC\nCCCCCC", "C\rCCCCCCC", "CCCC\n\r\nCCCC"} {
+		got, err := enc.DecodeString(input)
+		if err != nil || string(got) != want {
+			t.Errorf("DecodeString(%q) = %x, %v, want %x", input, got, err, want)
+		}
+		r, err := io.ReadAll(NewDecoder(enc, strings.NewReader(input)))
+		if err != nil || string(r) != want {
+			t.Errorf("Decoder(%q) = %x, %v, want %x", input, r, err, want)
 		}
 	}
 }

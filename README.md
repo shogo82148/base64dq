@@ -79,7 +79,7 @@ base64 uses the Japanese hiragana instead of ascii alphabets and digits.
 | 61    | 9               | ぶ                |
 | 62    | +               | べ                |
 | 63    | /               | ぼ                |
-| (pad) | =               | ・                |
+| (pad) | =               | ん                |
 
 ## Reference
 

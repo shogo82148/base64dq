@@ -13,13 +13,13 @@ func TestRunEncode(t *testing.T) {
 	if code != 0 {
 		t.Error("code != 0")
 	}
-	if w.String() != "てきにがふきびがけそてづよぐまにやあ・・" {
-		t.Error("w.String() != `てきにがふきびがけそてづよぐまにやあ・・`")
+	if w.String() != "てきにがふきびがけそてづよぐまにやあんん" {
+		t.Error("w.String() != `てきにがふきびがけそてづよぐまにやあんん`")
 	}
 }
 
 func TestRunDecode(t *testing.T) {
-	r := strings.NewReader("てきにがふきびがけそてづよぐまにやあ・・")
+	r := strings.NewReader("てきにがふきびがけそてづよぐまにやあんん")
 	w := new(bytes.Buffer)
 	code := runDecode(w, r)
 	if code != 0 {

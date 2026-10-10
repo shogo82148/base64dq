@@ -126,7 +126,7 @@ const encodeStd = "あいうえおかきくけこさしすせそたちつてと�
 const encodeName = "０１２３４５６７８９あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんっゃゅょ゛゜ー　"
 
 const (
-	StdPadding rune = '・' // Standard padding character
+	StdPadding rune = 'ん' // Standard padding character
 	NoPadding  rune = -1  // No padding
 )
 
@@ -334,7 +334,8 @@ func (enc *Encoding) WithPadding(padding rune) *Encoding {
 var StdEncoding = NewEncoding(encodeStd)
 
 // NameEncoding is a base64 encoding used in encoding a user name.
-var NameEncoding = NewEncoding(encodeName)
+// Its alphabet contains 'ん', so it uses '・' as the padding character instead of StdPadding.
+var NameEncoding = NewEncoding(encodeName).WithPadding('・')
 
 // RawStdEncoding is the standard raw, unpadded base64 encoding.
 var RawStdEncoding = StdEncoding.WithPadding(NoPadding)

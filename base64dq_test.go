@@ -26,27 +26,27 @@ var pairs = []testpair{
 
 	// RFC 3548 examples
 	{"\x14\xfb\x9c\x03\xd9\x7e", "かたぐへあぶよべ"},
-	{"\x14\xfb\x9c\x03\xd9", "かたぐへあぶゆ・"},
-	{"\x14\xfb\x9c\x03", "かたぐへあご・・"},
+	{"\x14\xfb\x9c\x03\xd9", "かたぐへあぶゆん"},
+	{"\x14\xfb\x9c\x03", "かたぐへあごんん"},
 
 	// RFC 4648 examples
 	{"", ""},
-	{"f", "はむ・・"},
-	{"fo", "はらび・"},
+	{"f", "はむんん"},
+	{"fo", "はらびん"},
 	{"foo", "はらぶげ"},
-	{"foob", "はらぶげのむ・・"},
-	{"fooba", "はらぶげのらお・"},
+	{"foob", "はらぶげのむんん"},
+	{"fooba", "はらぶげのらおん"},
 	{"foobar", "はらぶげのらかじ"},
 
 	// Wikipedia examples
-	{"sure.", "へぢにじはてづ・"},
-	{"sure", "へぢにじはち・・"},
+	{"sure.", "へぢにじはてづん"},
+	{"sure", "へぢにじはちんん"},
 	{"sur", "へぢにじ"},
-	{"su", "へぢな・"},
-	{"leasure.", "ふきにめへぢにじはてづ・"},
-	{"easure.", "はぬかずほねこよしむ・・"},
+	{"su", "へぢなん"},
+	{"leasure.", "ふきにめへぢにじはてづん"},
+	{"easure.", "はぬかずほねこよしむんん"},
 	{"asure.", "のねせぞへらなぐ"},
-	{"sure.", "へぢにじはてづ・"},
+	{"sure.", "へぢにじはてづん"},
 }
 
 var std2dq = strings.NewReplacer(
@@ -114,7 +114,7 @@ var std2dq = strings.NewReplacer(
 	"9", "ぶ",
 	"+", "べ",
 	"/", "ぼ",
-	"=", "・",
+	"=", "ん",
 )
 
 var dq2std = strings.NewReplacer(
@@ -182,7 +182,7 @@ var dq2std = strings.NewReplacer(
 	"ぶ", "9",
 	"べ", "+",
 	"ぼ", "/",
-	"・", "=",
+	"ん", "=",
 )
 
 // Do nothing to a reference base64 string (leave in standard format)
@@ -192,7 +192,7 @@ func stdRef(ref string) string {
 
 // Convert a reference string to raw, unpadded format
 func rawRef(ref string) string {
-	return strings.TrimRight(ref, "・")
+	return strings.TrimRight(ref, "ん")
 }
 
 type encodingTest struct {
@@ -209,7 +209,7 @@ var encodingTests = []encodingTest{
 
 var bigtest = testpair{
 	"Twas brillig, and the slithy toves",
-	"にくほめへじいもへらよがふきよりしういめふらちむほきめよけくせがひねつるまていぜふぢはよへご・・",
+	"にくほめへじいもへらよがふきよりしういめふらちむほきめよけくせがひねつるまていぜふぢはよへごんん",
 }
 
 func TestEncode(t *testing.T) {
@@ -384,29 +384,29 @@ var decodeCorruptTestCases = []struct {
 }{
 	{"", -1},
 	{"\n", -1},
-	{"あああ・\n", -1},
+	{"あああん\n", -1},
 	{"ああああ\n", -1},
 	{"\xff", 0},
 	{"！！！！", 0},
-	{"・・・・", 0},
-	{"が・・・", len("が")},
-	{"・あああ", 0},
-	{"あ・ああ", len("あ")},
-	{"ああ・あ", len("ああ")},
-	{"ああ・・あ", len("ああ・・")},
-	{"あああ・ああああ", len("あああ・")},
+	{"んんんん", 0},
+	{"がんんん", len("が")},
+	{"んあああ", 0},
+	{"あんああ", len("あ")},
+	{"ああんあ", len("ああ")},
+	{"ああんんあ", len("ああんん")},
+	{"あああんああああ", len("あああん")},
 	{"あああああ", len("ああああ")},
 	{"ああああああ", len("ああああ")},
-	{"あ・", len("あ")},
-	{"あ・・", len("あ")},
-	{"ああ・", len("ああ・")},
-	{"ああ・・", -1},
-	{"あああ・", -1},
+	{"あん", len("あ")},
+	{"あんん", len("あ")},
+	{"ああん", len("ああん")},
+	{"ああんん", -1},
+	{"あああん", -1},
 	{"ああああ", -1},
-	{"ああああああ・", len("ああああああ・")},
-	{"ふるいけやか・・・・・", len("ふるいけやか・・")},
+	{"ああああああん", len("ああああああん")},
+	{"ふるいけやかんんんんん", len("ふるいけやかんん")},
 	{"あ！\n", len("あ")},
-	{"あ・\n", len("あ")},
+	{"あん\n", len("あ")},
 }
 
 func TestDecodeCorrupt(t *testing.T) {

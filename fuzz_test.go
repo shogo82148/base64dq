@@ -19,7 +19,7 @@ func validAlphabets(alphabets string) bool {
 	if strings.ContainsRune(alphabets, utf8.RuneError) {
 		return false
 	}
-	if strings.ContainsAny(alphabets, "・\n\r") {
+	if strings.ContainsAny(alphabets, "ん\n\r") {
 		return false
 	}
 	seen := map[rune]bool{}

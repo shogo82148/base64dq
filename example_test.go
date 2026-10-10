@@ -20,7 +20,7 @@ func Example() {
 	}
 	fmt.Println(string(decoded))
 	// Output:
-	// てきにがふきびがけそてづよぐまにやあ・・
+	// てきにがふきびがけそてづよぐまにやあんん
 	// Hello, 世界
 }
 
@@ -29,7 +29,7 @@ func ExampleEncoding_EncodeToString() {
 	str := base64dq.StdEncoding.EncodeToString(data)
 	fmt.Println(str)
 	// Output:
-	// のぬででけうがむふだざゆけうのむはきかぜのち・・
+	// のぬででけうがむふだざゆけうのむはきかぜのちんん
 }
 
 func ExampleEncoding_Encode() {
@@ -38,7 +38,7 @@ func ExampleEncoding_Encode() {
 	base64dq.StdEncoding.Encode(dst, data)
 	fmt.Println(string(dst))
 	// Output:
-	// てきにがふきびがけくほげへらざゆけち・・
+	// てきにがふきびがけくほげへらざゆけちんん
 }
 
 func ExampleEncoding_DecodeString() {
@@ -54,7 +54,7 @@ func ExampleEncoding_DecodeString() {
 }
 
 func ExampleEncoding_Decode() {
-	str := "てきにがふきびがけくほげへらざゆけち・・"
+	str := "てきにがふきびがけくほげへらざゆけちんん"
 	dst := make([]byte, base64dq.StdEncoding.DecodedLen(len(str)))
 	n, err := base64dq.StdEncoding.Decode(dst, []byte(str))
 	if err != nil {
@@ -76,5 +76,5 @@ func ExampleNewEncoder() {
 	// won't be encoded.
 	encoder.Close()
 	// Output:
-	// はらぶげあきこめへむ・・
+	// はらぶげあきこめへむんん
 }

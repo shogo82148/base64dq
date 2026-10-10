@@ -11,9 +11,9 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"sync"
 	"unicode/utf8"
-	"unsafe"
 )
 
 const (
@@ -399,13 +399,21 @@ func (enc *Encoding) Encode(dst, src []byte) int {
 }
 
 func (enc *Encoding) EncodeToString(src []byte) string {
-	buf := make([]byte, enc.EncodedLen(len(src)))
-	n := enc.Encode(buf, src)
-	if n == 0 {
-		return ""
+	var sb strings.Builder
+	sb.Grow(enc.EncodedLen(len(src)))
+
+	// Encode src in chunks into a small buffer on the stack,
+	// and append them to sb. sb.String() doesn't copy the result.
+	var buf [256]byte
+	chunk := len(buf) / enc.maxSize / 4 * 3
+	for len(src) > chunk {
+		n := enc.Encode(buf[:], src[:chunk])
+		sb.Write(buf[:n])
+		src = src[chunk:]
 	}
-	// buf is not referenced anymore, so we can convert it to a string without copying.
-	return unsafe.String(&buf[0], n)
+	n := enc.Encode(buf[:], src)
+	sb.Write(buf[:n])
+	return sb.String()
 }
 
 // EncodedLen returns the length in bytes of the base64 encoding

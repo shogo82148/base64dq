@@ -131,6 +131,7 @@ const (
 )
 
 // NewEncoding returns a new padded Encoding defined by the given alphabet.
+// The alphabet must be 64 runes long and must not contain duplicate symbols.
 func NewEncoding(encoder string) *Encoding {
 	e := &Encoding{
 		padChar: StdPadding,
@@ -138,6 +139,7 @@ func NewEncoding(encoder string) *Encoding {
 	}
 
 	var pos [65]int
+	seen := make(map[rune]struct{}, 64)
 	j := 0
 	for i, ch := range encoder {
 		if j >= 64 {
@@ -146,8 +148,15 @@ func NewEncoding(encoder string) *Encoding {
 		if ch == utf8.RuneError {
 			panic("encoding alphabet contains invalid UTF-8 sequence")
 		}
+		if _, ok := seen[ch]; ok {
+			panic("encoding alphabet includes duplicate symbols")
+		}
+		seen[ch] = struct{}{}
 		pos[j] = i
 		j++
+	}
+	if j != 64 {
+		panic("encoding alphabet is not 64-runes long")
 	}
 	pos[64] = len(encoder)
 
